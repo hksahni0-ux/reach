@@ -1,6 +1,7 @@
 // Command reach finds high-visibility posts to comment on, drafts short comments for approval,
 // and posts the approved ones. See README.md.
 //
+//	reach run      [-hours 24] [-enrich 5] [-drafts 5] [-dry]   find, rank, draft, queue in the Sheet
 //	reach discover [-window last-day] [-top 15] [-out ranked.json] [-from file.json…]
 package main
 
@@ -17,6 +18,9 @@ import (
 
 	"github.com/hksahni0-ux/reach/internal/composio"
 	"github.com/hksahni0-ux/reach/internal/discover"
+	"github.com/hksahni0-ux/reach/internal/draft"
+	"github.com/hksahni0-ux/reach/internal/llm"
+	"github.com/hksahni0-ux/reach/internal/queue"
 	"github.com/hksahni0-ux/reach/internal/rank"
 )
 
@@ -33,6 +37,8 @@ func main() {
 	}
 	var err error
 	switch os.Args[1] {
+	case "run":
+		err = runCycle(os.Args[2:])
 	case "discover":
 		err = runDiscover(os.Args[2:])
 	default:
@@ -45,7 +51,8 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: reach discover [-config config/topics.json] [-window last-day] [-top 15] [-out file.json] [-from saved-search.json …]")
+	fmt.Fprintln(os.Stderr, "usage: reach run [-config config/topics.json] [-hours 24] [-per-query 10] [-enrich 5] [-drafts 5] [-dry]")
+	fmt.Fprintln(os.Stderr, "       reach discover [-config config/topics.json] [-window last-day] [-top 15] [-out file.json] [-from saved-search.json …]")
 	os.Exit(2)
 }
 
@@ -107,6 +114,121 @@ func runDiscover(args []string) error {
 		fmt.Fprintf(os.Stderr, "wrote %d posts to %s\n", len(ranked), *out)
 	}
 	return nil
+}
+
+// runCycle is one scheduled run: Exa finds recent posts (free), ScrapeCreators fills in the
+// newest few (1 credit each), they're ranked, the best get a drafted comment, and the drafts
+// go to the approval Sheet. Nothing is posted here.
+func runCycle(args []string) error {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	cfgPath := fs.String("config", "config/topics.json", "topics and settings")
+	hours := fs.Int("hours", 24, "only posts from the last this many hours")
+	perQuery := fs.Int("per-query", 10, "Exa results per search phrase")
+	enrich := fs.Int("enrich", 5, "posts to look up on ScrapeCreators (1 credit each)")
+	drafts := fs.Int("drafts", 5, "comments to draft")
+	tries := fs.Int("tries", 3, "attempts per draft to pass the comment rules")
+	dry := fs.Bool("dry", false, "print the drafts instead of adding them to the Sheet")
+	fs.Parse(args)
+
+	cfg, err := loadConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
+	env, err := need("COMPOSIO_API_KEY", "COMPOSIO_USER_ID", "NVIDIA_API_KEY")
+	if err != nil {
+		return err
+	}
+	sheetID := os.Getenv("SHEET_ID")
+	if sheetID == "" && !*dry {
+		return fmt.Errorf("SHEET_ID is not set (or use -dry)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	cx := composio.New(env["COMPOSIO_API_KEY"], env["COMPOSIO_USER_ID"])
+	sheet := queue.Sheet{Ex: cx, ID: sheetID}
+
+	queued := map[string]bool{}
+	if sheetID != "" {
+		if queued, err = sheet.QueuedURLs(ctx); err != nil {
+			return fmt.Errorf("reading the Sheet: %w", err)
+		}
+	}
+
+	since := time.Now().Add(-time.Duration(*hours) * time.Hour)
+	found, errs := discover.ExaLinkedIn(ctx, cx, cfg.Topics, since, *perQuery)
+	warn(errs)
+	var fresh []discover.Post
+	for _, p := range found {
+		if !queued[p.URL] {
+			fresh = append(fresh, p)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Exa: %d posts from the last %dh, %d not yet queued\n", len(found), *hours, len(fresh))
+	if len(fresh) == 0 {
+		return nil
+	}
+
+	detailed, errs := discover.Enrich(ctx, cx, fresh, *enrich)
+	warn(errs)
+	ranked := rank.Rank(detailed, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
+	if len(ranked) > *drafts {
+		ranked = ranked[:*drafts]
+	}
+	printTable(ranked)
+
+	projects, err := draft.LoadPortfolio(ctx, cfg.Site)
+	if err != nil {
+		return fmt.Errorf("loading the website's projects: %w", err)
+	}
+	models := llm.DefaultModels
+	if m := os.Getenv("REACH_MODELS"); m != "" {
+		models = strings.Split(m, ",")
+	}
+	ai := llm.New(env["NVIDIA_API_KEY"], models)
+	byTopic := map[string][]string{}
+	for _, t := range cfg.Topics {
+		byTopic[t.Name] = t.Projects
+	}
+
+	var rows [][]any
+	for _, p := range ranked {
+		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]), cfg.Site, cfg.MaxCommentChars, *tries)
+		status := "ok"
+		if len(d.Violations) > 0 {
+			status = "needs edit: " + d.Violations[0].String()
+		}
+		fmt.Printf("\n%s\n  %s\n  [%d chars, %s, %s]\n", p.URL, d.Comment, len([]rune(d.Comment)), d.Model, status)
+		rows = append(rows, queue.Row(p, d, time.Now()))
+	}
+	if *dry {
+		return nil
+	}
+	if err := sheet.Append(ctx, rows); err != nil {
+		return fmt.Errorf("adding to the Sheet: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "\nadded %d drafts to the Sheet\n", len(rows))
+	return nil
+}
+
+func need(names ...string) (map[string]string, error) {
+	out := map[string]string{}
+	var missing []string
+	for _, n := range names {
+		if out[n] = os.Getenv(n); out[n] == "" {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("not set: %s", strings.Join(missing, ", "))
+	}
+	return out, nil
+}
+
+func warn(errs []error) {
+	for _, e := range errs {
+		fmt.Fprintln(os.Stderr, "warning:", e)
+	}
 }
 
 func loadConfig(path string) (config, error) {

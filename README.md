@@ -30,13 +30,31 @@ Posts older than 24 hours, posts without a date and my own posts are skipped.
 A draft goes to the queue only if it passes every rule in [`internal/rules`](internal/rules/comment.go):
 150 characters or fewer · no generic opener ("Great post!") · no hype or sales words · no hashtags · no em dashes ·
 at most one emoji · at most one link, HTTPS, to an allowed page · not a near-copy of a comment already on the post.
+[`internal/draft`](internal/draft/draft.go) adds one more: every number in a comment must appear in the post or in
+the project facts, the commonest way a model invents a result. A draft that breaks a rule is sent back with the
+broken rules listed (up to three tries); one that still fails goes to the Sheet as "needs edit".
+
+## How a run works
+
+1. **Find (free).** Exa searches every topic phrase for LinkedIn posts from the last 24 hours. A post's time is read
+   from the activity ID in its URL, which is exact.
+2. **Look up (1 credit each).** ScrapeCreators fills in the newest few: author, followers, likes, comments and what
+   people already said. Credits are limited, so this is capped (`-enrich 5`).
+3. **Rank** as below, and keep the best few (`-drafts 5`).
+4. **Draft.** Comments are written from the projects the website publishes at `/portfolio.json`, so they only cite
+   real work. Models are tried in order on NVIDIA's API until one answers: Nemotron 3 Ultra, Llama 3.2 90B,
+   DeepSeek V4.1 Flash, Nemotron 3 Super (`REACH_MODELS` overrides).
+5. **Queue.** Drafts go to the Google Sheet as "pending". Posts already in the Sheet are never queued again.
 
 ## Use
 
+Keys live in `.env` (git-ignored): `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID`, `NVIDIA_API_KEY`, `SHEET_ID`.
+
 ```bash
-export COMPOSIO_API_KEY=…            # Composio dashboard → Settings → API keys
-export COMPOSIO_USER_ID=…            # the Composio user your LinkedIn account is connected under
-go run ./cmd/reach discover          # search every topic, rank, print the top 15
+set -a; . ./.env; set +a
+go run ./cmd/reach run -dry          # find, rank and draft; print instead of queueing
+go run ./cmd/reach run               # the same, adding drafts to the Sheet
+go run ./cmd/reach discover          # ScrapeCreators search only (1 credit per phrase), rank, print the top 15
 go run ./cmd/reach discover -window last-hour -top 30 -out today.ranked.json
 go run ./cmd/reach discover -from testdata/linkedin_search.json   # offline, from saved results
 ```
@@ -48,9 +66,12 @@ Topics, their search phrases, and which project pages each may link to live in [
 ```
 cmd/reach/            the command-line tool
 internal/composio/    Composio REST client (standard library only)
-internal/discover/    searching LinkedIn through Composio + ScrapeCreators, parsing, de-duplicating
+internal/discover/    finding posts (Exa, ScrapeCreators), dating them, de-duplicating
 internal/rank/        scoring and ordering candidate posts
 internal/rules/       hard rules every drafted comment must pass
+internal/llm/         NVIDIA model chain with fallback
+internal/draft/       writing comments from real project facts, checking, retrying
+internal/queue/       the Google Sheet approval queue
 config/topics.json    topics, search phrases, linkable projects
 testdata/             fixtures (fictional authors)
 ```
@@ -58,8 +79,8 @@ testdata/             fixtures (fictional authors)
 ## Roadmap
 
 1. ~~Find and rank posts~~
-2. Draft comments with an LLM; a second model scores specificity and relevance; a test set of posts runs in CI
-3. Approval queue in Google Sheets; post approved comments, spaced through the day
+2. ~~Draft comments with an LLM~~; next, a second model scores specificity and relevance, and a test set of posts runs in CI
+3. ~~Approval queue in Google Sheets~~; next, post approved comments, spaced through the day
 4. Weekly drafts of my own LinkedIn posts from project pages, scheduled through the official posting API
 5. Instagram: my own posts and carousels from project pages (Graph API, own content only)
 6. Developer communities: publish write-ups to dev.to automatically (its API allows it, with a canonical link
