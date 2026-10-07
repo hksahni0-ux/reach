@@ -86,3 +86,79 @@ func urlsIn(raw json.RawMessage) map[string]bool {
 	}
 	return out
 }
+
+const (
+	updateSlug = "GOOGLESHEETS_BATCH_UPDATE"
+	allRows    = "Sheet1!A2:P"
+)
+
+// Approved is a row Prateek has marked "approve", with its (possibly edited) comment.
+type Approved struct {
+	Row      int // 1-based sheet row
+	Platform string
+	URL      string
+	Comment  string
+}
+
+// Approved returns every row whose Status is "approve" and that has a comment.
+func (s Sheet) Approved(ctx context.Context) ([]Approved, error) {
+	raw, err := s.Ex.Execute(ctx, getSlug, map[string]any{"spreadsheet_id": s.ID, "ranges": []string{allRows}})
+	if err != nil {
+		return nil, err
+	}
+	return approvedIn(raw)
+}
+
+func approvedIn(raw json.RawMessage) ([]Approved, error) {
+	type valueRange struct {
+		Values [][]string `json:"values"`
+	}
+	var r struct {
+		ValueRanges  []valueRange `json:"valueRanges"`
+		ResponseData *struct {
+			ValueRanges []valueRange `json:"valueRanges"`
+		} `json:"response_data"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("parsing the Sheet: %w", err)
+	}
+	vr := r.ValueRanges
+	if len(vr) == 0 && r.ResponseData != nil {
+		vr = r.ResponseData.ValueRanges
+	}
+	var out []Approved
+	if len(vr) == 0 {
+		return out, nil
+	}
+	for i, row := range vr[0].Values {
+		cell := func(c int) string {
+			if c < len(row) {
+				return strings.TrimSpace(row[c])
+			}
+			return ""
+		}
+		// Columns as in Header: B Status, C Platform, J Post URL, L Draft comment.
+		if strings.EqualFold(cell(1), "approve") && cell(11) != "" && cell(9) != "" {
+			out = append(out, Approved{Row: i + 2, Platform: cell(2), URL: cell(9), Comment: cell(11)})
+		}
+	}
+	return out, nil
+}
+
+// Mark sets a row's Status and Posted at.
+func (s Sheet) Mark(ctx context.Context, row int, status string, at time.Time) error {
+	if _, err := s.Ex.Execute(ctx, updateSlug, map[string]any{
+		"spreadsheet_id": s.ID, "sheet_name": "Sheet1", "first_cell_location": fmt.Sprintf("B%d", row),
+		"valueInputOption": "RAW", "values": [][]any{{status}},
+	}); err != nil {
+		return err
+	}
+	if at.IsZero() {
+		return nil
+	}
+	_, err := s.Ex.Execute(ctx, updateSlug, map[string]any{
+		"spreadsheet_id": s.ID, "sheet_name": "Sheet1", "first_cell_location": fmt.Sprintf("P%d", row),
+		"valueInputOption": "RAW", "values": [][]any{{at.UTC().Format("2006-01-02 15:04")}},
+	})
+	return err
+}

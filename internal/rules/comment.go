@@ -15,6 +15,7 @@ import (
 type Policy struct {
 	MaxChars     int      // whole comment, link included, so it never hides behind "see more"
 	AllowedLinks []string // URL prefixes a comment may link to (only one link per comment)
+	RequireLink  bool     // every comment must carry one allowed link
 }
 
 // Violation is one broken rule, in words the queue can show.
@@ -76,6 +77,9 @@ func Check(comment string, p Policy, existing []string) []Violation {
 	}
 
 	links := urlPattern.FindAllString(c, -1)
+	if p.RequireLink && len(links) == 0 {
+		v = append(v, Violation{"no link", "end with one link from the list"})
+	}
 	if len(links) > 1 {
 		v = append(v, Violation{"links", fmt.Sprintf("%d links, at most 1", len(links))})
 	}

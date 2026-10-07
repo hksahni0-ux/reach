@@ -1,16 +1,19 @@
-// Command reach finds high-visibility posts to comment on, drafts short comments for approval,
-// and posts the approved ones. See README.md.
+// Command reach finds near-viral posts to comment on, drafts short comments for approval,
+// and helps post the approved ones. See README.md.
 //
-//	reach run      [-hours 24] [-enrich 5] [-drafts 5] [-dry]   find, rank, draft, queue in the Sheet
+//	reach run      [-source scrapecreators|exa] [-drafts 5] [-dry]   find, rank, draft, queue in the Sheet
+//	reach assist                                                    copy each approved comment and open its post
 //	reach discover [-window last-day] [-top 15] [-out ranked.json] [-from file.json…]
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -28,6 +31,10 @@ type config struct {
 	Site            string           `json:"site"`
 	ExcludeAuthors  []string         `json:"exclude_authors"`
 	MaxCommentChars int              `json:"max_comment_chars"`
+	MinLikes        int              `json:"min_likes"`         // only near-viral posts get a comment
+	MinComments     int              `json:"min_comments"`      // and ones where people are talking
+	QueriesPerTopic int              `json:"queries_per_topic"` // ScrapeCreators searches cost 1 credit each
+	OwnPosts        []draft.OwnPost  `json:"own_posts"`         // Prateek's posts a comment may link to
 	Topics          []discover.Topic `json:"topics"`
 }
 
@@ -39,6 +46,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = runCycle(os.Args[2:])
+	case "assist":
+		err = runAssist()
 	case "discover":
 		err = runDiscover(os.Args[2:])
 	default:
@@ -51,7 +60,8 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: reach run [-config config/topics.json] [-hours 24] [-per-query 10] [-enrich 5] [-drafts 5] [-dry]")
+	fmt.Fprintln(os.Stderr, "usage: reach run [-config config/topics.json] [-source scrapecreators|exa] [-drafts 5] [-dry]")
+	fmt.Fprintln(os.Stderr, "       reach assist")
 	fmt.Fprintln(os.Stderr, "       reach discover [-config config/topics.json] [-window last-day] [-top 15] [-out file.json] [-from saved-search.json …]")
 	os.Exit(2)
 }
@@ -116,15 +126,20 @@ func runDiscover(args []string) error {
 	return nil
 }
 
-// runCycle is one scheduled run: Exa finds recent posts (free), ScrapeCreators fills in the
-// newest few (1 credit each), they're ranked, the best get a drafted comment, and the drafts
-// go to the approval Sheet. Nothing is posted here.
+// runCycle is one scheduled run: find posts from the last day that are already taking off,
+// keep only those past the like and comment thresholds, draft a comment with a link for the
+// best few, and add them to the approval Sheet. Nothing is posted here.
+//
+// ScrapeCreators (default) returns likes and comments with each search, so near-viral posts
+// can be picked out for 1 credit per phrase. Exa is free but blind to engagement, so with
+// -source exa only the newest few are looked up (1 credit each) and filtered.
 func runCycle(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("config", "config/topics.json", "topics and settings")
+	source := fs.String("source", "scrapecreators", "where to find posts: scrapecreators or exa")
 	hours := fs.Int("hours", 24, "only posts from the last this many hours")
-	perQuery := fs.Int("per-query", 10, "Exa results per search phrase")
-	enrich := fs.Int("enrich", 5, "posts to look up on ScrapeCreators (1 credit each)")
+	perQuery := fs.Int("per-query", 10, "Exa results per search phrase (-source exa)")
+	enrich := fs.Int("enrich", 5, "posts to look up on ScrapeCreators, 1 credit each (-source exa)")
 	drafts := fs.Int("drafts", 5, "comments to draft")
 	tries := fs.Int("tries", 3, "attempts per draft to pass the comment rules")
 	dry := fs.Bool("dry", false, "print the drafts instead of adding them to the Sheet")
@@ -155,25 +170,36 @@ func runCycle(args []string) error {
 		}
 	}
 
-	since := time.Now().Add(-time.Duration(*hours) * time.Hour)
-	found, errs := discover.ExaLinkedIn(ctx, cx, cfg.Topics, since, *perQuery)
+	var found []discover.Post
+	var errs []error
+	switch *source {
+	case "scrapecreators":
+		found, errs = discover.LinkedIn(ctx, cx, firstQueries(cfg.Topics, cfg.QueriesPerTopic), "last-day")
+	case "exa":
+		var stubs []discover.Post
+		stubs, errs = discover.ExaLinkedIn(ctx, cx, cfg.Topics, time.Now().Add(-time.Duration(*hours)*time.Hour), *perQuery)
+		warn(errs)
+		stubs = notQueued(stubs, queued)
+		found, errs = discover.Enrich(ctx, cx, stubs, *enrich)
+	default:
+		return fmt.Errorf("unknown -source %q", *source)
+	}
 	warn(errs)
-	var fresh []discover.Post
-	for _, p := range found {
-		if !queued[p.URL] {
-			fresh = append(fresh, p)
+
+	var hot []discover.Post
+	for _, p := range notQueued(found, queued) {
+		if p.Likes >= cfg.MinLikes && p.Comments >= cfg.MinComments {
+			hot = append(hot, p)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "Exa: %d posts from the last %dh, %d not yet queued\n", len(found), *hours, len(fresh))
-	if len(fresh) == 0 {
-		return nil
-	}
-
-	detailed, errs := discover.Enrich(ctx, cx, fresh, *enrich)
-	warn(errs)
-	ranked := rank.Rank(detailed, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
+	fmt.Fprintf(os.Stderr, "%s: %d posts, %d new with %d+ likes and %d+ comments\n", *source, len(found), len(hot), cfg.MinLikes, cfg.MinComments)
+	ranked := rank.Rank(hot, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
 	if len(ranked) > *drafts {
 		ranked = ranked[:*drafts]
+	}
+	if len(ranked) == 0 {
+		fmt.Fprintln(os.Stderr, "nothing near-viral this run; lower min_likes or min_comments in the config to cast wider")
+		return nil
 	}
 	printTable(ranked)
 
@@ -193,7 +219,8 @@ func runCycle(args []string) error {
 
 	var rows [][]any
 	for _, p := range ranked {
-		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]), cfg.Site, cfg.MaxCommentChars, *tries)
+		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]),
+			draft.Options{Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts})
 		status := "ok"
 		if len(d.Violations) > 0 {
 			status = "needs edit: " + d.Violations[0].String()
@@ -209,6 +236,73 @@ func runCycle(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "\nadded %d drafts to the Sheet\n", len(rows))
 	return nil
+}
+
+// runAssist is the hands-on way to post when the API can't: for each approved comment it puts
+// the text on the clipboard and opens the post, Prateek pastes and clicks Post, then presses
+// Enter here and the row is marked posted. macOS only (pbcopy, open).
+func runAssist() error {
+	env, err := need("COMPOSIO_API_KEY", "COMPOSIO_USER_ID", "SHEET_ID")
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	sheet := queue.Sheet{Ex: composio.New(env["COMPOSIO_API_KEY"], env["COMPOSIO_USER_ID"]), ID: env["SHEET_ID"]}
+	approved, err := sheet.Approved(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the Sheet: %w", err)
+	}
+	if len(approved) == 0 {
+		fmt.Println("Nothing approved in the Sheet.")
+		return nil
+	}
+	in := bufio.NewReader(os.Stdin)
+	for i, a := range approved {
+		copyCmd := exec.Command("pbcopy")
+		copyCmd.Stdin = strings.NewReader(a.Comment)
+		if err := copyCmd.Run(); err != nil {
+			return fmt.Errorf("copying to the clipboard: %w", err)
+		}
+		if err := exec.Command("open", a.URL).Run(); err != nil {
+			return fmt.Errorf("opening the post: %w", err)
+		}
+		fmt.Printf("\n[%d/%d] Comment copied and post opened:\n  %s\n", i+1, len(approved), a.Comment)
+		fmt.Print("Paste it (Cmd+V), click Post, then press Enter here. Type s and Enter to skip: ")
+		answer, _ := in.ReadString('\n')
+		status, at := "posted", time.Now()
+		if strings.TrimSpace(strings.ToLower(answer)) == "s" {
+			status, at = "skip", time.Time{}
+		}
+		if err := sheet.Mark(ctx, a.Row, status, at); err != nil {
+			fmt.Fprintf(os.Stderr, "row %d: couldn't mark it %s: %v\n", a.Row, status, err)
+		}
+	}
+	return nil
+}
+
+// firstQueries keeps each topic's first n search phrases (all of them if n is 0).
+func firstQueries(topics []discover.Topic, n int) []discover.Topic {
+	if n <= 0 {
+		return topics
+	}
+	out := make([]discover.Topic, len(topics))
+	for i, t := range topics {
+		out[i] = t
+		if len(t.Queries) > n {
+			out[i].Queries = t.Queries[:n]
+		}
+	}
+	return out
+}
+
+func notQueued(posts []discover.Post, queued map[string]bool) []discover.Post {
+	var out []discover.Post
+	for _, p := range posts {
+		if !queued[p.URL] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func need(names ...string) (map[string]string, error) {

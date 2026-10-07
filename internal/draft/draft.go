@@ -76,29 +76,53 @@ const system = `You write LinkedIn comments for Prateek Sahni, a UK-based engine
 
 You ARE Prateek, writing in the first person. The post's author is someone else: never describe their background as Prateek's, and never attribute Prateek's experience to them.
 
+The post is already popular, so the comment will be read by many people. Its job is to add a point worth reading and give readers a reason to click Prateek's link.
+
 Write ONE comment replying to the post. Rules:
-- At most %d characters in total, including any link. A project link is about 50 characters, so with a link keep the words under 95. Shorter is better; one or two sentences.
-- Add something specific: a concrete lesson, number or trade-off from one of Prateek's projects below, or a sharp question. Never just agree or praise.
+- At most %d characters in total, including the link. The link is about 50 characters, so keep the words under %d. One or two sentences.
+- Take a clear stance on the post's point and back it with something specific: a concrete lesson, number or trade-off from Prateek's work below. Never just agree or praise.
+- End with exactly ONE link from the LINKS list, chosen in this order: the project page that best backs your point; otherwise one of Prateek's own LinkedIn posts on the same subject; otherwise the website homepage. Copy it exactly. The sentence before it should make the link feel useful, not salesy (no "check out", no "DM me").
 - Write complete, natural sentences, as you'd say them to a colleague. Not telegraphic notes, no project names used as jargon.
-- Only mention a project if it genuinely matches what the post is about. If none does, comment from general engineering experience or ask a thoughtful question, without naming a project or linking.
-- Only claim experience the project facts support. Never invent numbers, percentages, clients or results: any number you use must appear in the facts below.
+- Only claim experience the facts support. Never invent numbers, percentages, clients or results: any number you use must appear in the facts below.
 - Plain British English, first person, sounds like a person typing. No hashtags, no em dashes, at most one emoji (prefer none).
 - Never start with praise ("Great post", "Love this", "Spot on", ...). No buzzwords (leverage, unlock, game-changer, seamless, delve, elevate).
-- A link is optional. Only if a project is directly on the post's topic, end with its URL from the list, exactly as given. Otherwise no link.
 - Don't repeat what the existing comments already say.
 
 Reply with the comment text only, nothing else.`
 
-// Write drafts a comment for p using the given projects, retrying up to tries times.
-func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, site string, maxChars, tries int) Draft {
-	policy := rules.Policy{MaxChars: maxChars, AllowedLinks: []string{strings.TrimRight(site, "/") + "/"}}
-	facts := userPrompt(p, projects, site)
+// OwnPost is one of Prateek's LinkedIn posts a comment may link to.
+type OwnPost struct {
+	URL   string `json:"url"`
+	About string `json:"about"` // one line on what it covers, so the model can match it to a post
+}
+
+// Options are the settings Write needs beyond the post itself.
+type Options struct {
+	Site     string
+	MaxChars int
+	Tries    int
+	OwnPosts []OwnPost
+}
+
+// linkBudget is the room a link takes, so the prompt can tell the model how many words fit.
+const linkBudget = 55
+
+// Write drafts a comment for p using the given projects, retrying up to o.Tries times.
+// Every comment must end with one link: a project page, one of Prateek's posts, or the site.
+func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, o Options) Draft {
+	site := strings.TrimRight(o.Site, "/") + "/"
+	allowed := []string{site}
+	for _, op := range o.OwnPosts {
+		allowed = append(allowed, ShortPostURL(op.URL))
+	}
+	policy := rules.Policy{MaxChars: o.MaxChars, AllowedLinks: allowed, RequireLink: true}
+	facts := userPrompt(p, projects, o)
 	msgs := []llm.Message{
-		{Role: "system", Content: fmt.Sprintf(system, maxChars)},
+		{Role: "system", Content: fmt.Sprintf(system, o.MaxChars, o.MaxChars-linkBudget)},
 		{Role: "user", Content: facts},
 	}
 	var d Draft
-	for d.Attempts < tries {
+	for d.Attempts < o.Tries {
 		d.Attempts++
 		answer, model, err := c.Chat(ctx, msgs)
 		if err != nil {
@@ -109,13 +133,6 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, si
 		d.Violations = append(rules.Check(d.Comment, policy, p.TopComments), unsupportedNumbers(d.Comment, facts)...)
 		if len(d.Violations) == 0 {
 			return d
-		}
-		// Too long only because of the link: the comment stands on its own without it.
-		if bare := strings.TrimSpace(linkPattern.ReplaceAllString(d.Comment, "")); bare != d.Comment && onlyTooLong(d.Violations) {
-			if v := append(rules.Check(bare, policy, p.TopComments), unsupportedNumbers(bare, facts)...); len(v) == 0 {
-				d.Comment, d.Violations = bare, nil
-				return d
-			}
 		}
 		var why []string
 		for _, v := range d.Violations {
@@ -128,7 +145,18 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, si
 	return d
 }
 
-func userPrompt(p rank.Scored, projects []Project, site string) string {
+var activityID = regexp.MustCompile(`activity[-:](\d{18,20})`)
+
+// ShortPostURL turns a LinkedIn post link into its shortest stable form
+// (https://www.linkedin.com/feed/update/urn:li:activity:…/), so it fits in a comment.
+func ShortPostURL(u string) string {
+	if m := activityID.FindStringSubmatch(u); m != nil {
+		return "https://www.linkedin.com/feed/update/urn:li:activity:" + m[1] + "/"
+	}
+	return u
+}
+
+func userPrompt(p rank.Scored, projects []Project, o Options) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "POST by %s (topic: %s):\n%s\n\n", nonEmpty(p.AuthorName, "unknown"), p.Topic, p.Text)
 	if len(p.TopComments) > 0 {
@@ -141,10 +169,18 @@ func userPrompt(p rank.Scored, projects []Project, site string) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("PRATEEK'S PROJECTS (facts you may use; link = URL to end with, only if directly relevant):\n")
+	b.WriteString("PRATEEK'S PROJECTS (facts you may use):\n")
 	for _, pr := range projects {
-		fmt.Fprintf(&b, "- %s: %s %s Outcome: %s link = %s\n", pr.Title, pr.OneLiner, pr.Metric, pr.Outcome, ProjectURL(site, pr.ID))
+		fmt.Fprintf(&b, "- %s: %s %s Outcome: %s\n", pr.Title, pr.OneLiner, pr.Metric, pr.Outcome)
 	}
+	b.WriteString("\nLINKS (end with exactly one):\n")
+	for _, pr := range projects {
+		fmt.Fprintf(&b, "- project page, %s: %s\n", pr.Title, ProjectURL(o.Site, pr.ID))
+	}
+	for _, op := range o.OwnPosts {
+		fmt.Fprintf(&b, "- Prateek's LinkedIn post about %s: %s\n", op.About, ShortPostURL(op.URL))
+	}
+	fmt.Fprintf(&b, "- website homepage: %s\n", strings.TrimRight(o.Site, "/")+"/")
 	return b.String()
 }
 
@@ -164,10 +200,6 @@ func unsupportedNumbers(comment, facts string) []rules.Violation {
 		}
 	}
 	return v
-}
-
-func onlyTooLong(v []rules.Violation) bool {
-	return len(v) == 1 && v[0].Rule == "too long"
 }
 
 // clean strips quotes and labels models sometimes wrap the answer in.

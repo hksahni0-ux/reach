@@ -31,3 +31,18 @@ func TestURLsIn(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestApprovedIn(t *testing.T) {
+	raw := json.RawMessage(`{"valueRanges":[{"values":[
+		["d","pending","linkedin","","","","","","","https://www.linkedin.com/posts/a-activity-1","","comment a"],
+		["d","Approve ","linkedin","","","","","","","https://www.linkedin.com/posts/b-activity-2","","comment b"],
+		["d","approve","linkedin","","","","","","","https://www.linkedin.com/posts/c-activity-3","",""],
+		["d","posted","linkedin","","","","","","","https://www.linkedin.com/posts/d-activity-4","","comment d"]]}]}`)
+	got, err := approvedIn(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Row != 3 || got[0].Comment != "comment b" {
+		t.Fatalf("got %+v", got)
+	}
+}

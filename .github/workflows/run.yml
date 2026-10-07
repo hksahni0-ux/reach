@@ -1,0 +1,29 @@
+# Finds near-viral posts and queues drafted comments each weekday morning. Posting is done
+# by hand with `reach assist` (LinkedIn's comment API is partner-only). Also startable by
+# hand or from Apps Script through workflow_dispatch. Needs repository secrets:
+# COMPOSIO_API_KEY, COMPOSIO_USER_ID, NVIDIA_API_KEY, SHEET_ID.
+name: run
+on:
+  schedule:
+    - cron: "15 7 * * 1-5" # 08:15 UK summer time
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: reach
+  cancel-in-progress: false
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSIO_API_KEY: ${{ secrets.COMPOSIO_API_KEY }}
+      COMPOSIO_USER_ID: ${{ secrets.COMPOSIO_USER_ID }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      SHEET_ID: ${{ secrets.SHEET_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go run ./cmd/reach run -drafts 5

@@ -1,37 +1,93 @@
 {
   "site": "https://prateeksahni.pages.dev",
-  "exclude_authors": ["prateek-sahni-meng"],
-  "max_comment_chars": 150,
+  "exclude_authors": [
+    "prateek-sahni-meng"
+  ],
+  "max_comment_chars": 200,
+  "min_likes": 100,
+  "min_comments": 20,
+  "queries_per_topic": 1,
+  "own_posts": [],
   "topics": [
     {
       "name": "AI agents",
-      "queries": ["AI agents", "agentic AI", "LLM automation"],
-      "projects": ["outreach-agent", "job-agent", "voice-agent", "event-crm"]
+      "queries": [
+        "AI agents",
+        "agentic AI",
+        "LLM automation"
+      ],
+      "projects": [
+        "outreach-agent",
+        "job-agent",
+        "voice-agent",
+        "event-crm"
+      ]
     },
     {
       "name": "CRM",
-      "queries": ["CRM", "custom CRM", "sales pipeline tools"],
-      "projects": ["event-crm", "php-crm", "companylens"]
+      "queries": [
+        "CRM",
+        "custom CRM",
+        "sales pipeline tools"
+      ],
+      "projects": [
+        "event-crm",
+        "php-crm",
+        "companylens"
+      ]
     },
     {
       "name": "Sales automation",
-      "queries": ["sales automation", "cold outreach", "B2B lead generation"],
-      "projects": ["outreach-agent", "email-automation", "voice-agent", "companylens"]
+      "queries": [
+        "sales automation",
+        "cold outreach",
+        "B2B lead generation"
+      ],
+      "projects": [
+        "outreach-agent",
+        "email-automation",
+        "voice-agent",
+        "companylens"
+      ]
     },
     {
       "name": "Additive manufacturing",
-      "queries": ["additive manufacturing", "metal 3D printing", "3D printing post-processing"],
-      "projects": ["additive", "valve-reverse-eng", "am-services", "prosthetic-sockets"]
+      "queries": [
+        "additive manufacturing",
+        "metal 3D printing",
+        "3D printing post-processing"
+      ],
+      "projects": [
+        "additive",
+        "valve-reverse-eng",
+        "am-services",
+        "prosthetic-sockets"
+      ]
     },
     {
       "name": "B2B events",
-      "queries": ["B2B events", "event sponsorship", "exhibitor sales"],
-      "projects": ["event-crm", "event-sales", "expoplanner"]
+      "queries": [
+        "B2B events",
+        "event sponsorship",
+        "exhibitor sales"
+      ],
+      "projects": [
+        "event-crm",
+        "event-sales",
+        "expoplanner"
+      ]
     },
     {
       "name": "Engineering hiring",
-      "queries": ["hiring engineers", "AI engineer hiring", "process engineer jobs UK"],
-      "projects": ["job-agent", "portfolio-site"]
+      "queries": [
+        "hiring engineers",
+        "AI engineer hiring",
+        "process engineer jobs UK"
+      ],
+      "projects": [
+        "job-agent",
+        "portfolio-site"
+      ]
     }
   ]
 }

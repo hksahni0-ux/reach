@@ -2,15 +2,18 @@
 
 A small Go tool that grows the visibility of [prateeksahni.pages.dev](https://prateeksahni.pages.dev) and my LinkedIn,
 without becoming spam: it finds recent, fast-rising posts on my topics, drafts short comments that add something
-specific, checks them, and puts them in a Google Sheet. **Nothing is posted until I approve it.**
+specific and link back to my work, checks them, and puts them in a Google Sheet. **Nothing is posted until I approve it,
+and I post each one myself.**
 
 ## Why it works this way
 
-- **Approval before posting.** LinkedIn's terms don't allow bots to comment on their own, and a templated comment
-  with a link hurts a reputation more than it helps. The tool does the finding and drafting; I approve each comment.
-- **Short comments.** Every comment fits in 150 characters, so it never hides behind "see more".
-- **Links rarely, and only when they fit.** At most one link, only to a project page that matches the post's topic
-  (or one of my own posts), on roughly one comment in five.
+- **Approval before posting, and I post.** LinkedIn's terms don't allow bots to comment on their own, and its comment
+  API is open only to approved partners. The tool does the finding and drafting; `reach assist` copies each approved
+  comment and opens the post, so posting takes a paste and a click.
+- **Only near-viral posts.** Under a day old, with 100+ likes and 20+ comments (`min_likes`, `min_comments`), so a
+  good comment is seen by many people.
+- **Short comments, always with one link.** At most 200 characters including the link. The link is the project page
+  that backs the point, else one of my own LinkedIn posts on the subject, else the website.
 - **Comment early on posts that are climbing.** A fresh post gaining likes quickly beats a big post from yesterday.
 
 ## How it ranks posts
@@ -36,15 +39,21 @@ broken rules listed (up to three tries); one that still fails goes to the Sheet 
 
 ## How a run works
 
-1. **Find (free).** Exa searches every topic phrase for LinkedIn posts from the last 24 hours. A post's time is read
-   from the activity ID in its URL, which is exact.
-2. **Look up (1 credit each).** ScrapeCreators fills in the newest few: author, followers, likes, comments and what
-   people already said. Credits are limited, so this is capped (`-enrich 5`).
-3. **Rank** as below, and keep the best few (`-drafts 5`).
+1. **Find.** ScrapeCreators searches one phrase per topic for LinkedIn posts from the last day (1 credit each), with
+   likes and comments. (`-source exa` finds posts free through Exa instead, then looks up the newest few at 1 credit
+   each; Exa can't see engagement, so it's worse at finding near-viral posts.)
+2. **Filter** to posts past the like and comment thresholds that aren't already in the Sheet.
+3. **Rank** as above, and keep the best few (`-drafts 5`).
 4. **Draft.** Comments are written from the projects the website publishes at `/portfolio.json`, so they only cite
-   real work. Models are tried in order on NVIDIA's API until one answers: Nemotron 3 Ultra, Llama 3.2 90B,
-   DeepSeek V4.1 Flash, Nemotron 3 Super (`REACH_MODELS` overrides).
-5. **Queue.** Drafts go to the Google Sheet as "pending". Posts already in the Sheet are never queued again.
+   real work, and end with one link. Models are tried in order on NVIDIA's API until one answers: Nemotron 3 Ultra,
+   Llama 3.2 90B, DeepSeek V4.1 Flash, Nemotron 3 Super (`REACH_MODELS` overrides).
+5. **Queue.** Drafts go to the Google Sheet as "pending" (or "needs edit" if they failed a rule).
+6. **Approve.** I read each draft, edit it if I want, and set Status to "approve" or "skip" from the dropdown.
+7. **Post.** `reach assist` copies each approved comment, opens its post, and marks the row "posted" once I've pasted
+   it and pressed Enter.
+
+[`.github/workflows/run.yml`](.github/workflows/run.yml) drafts each weekday morning, and can be started by hand or
+from Apps Script.
 
 ## Use
 
@@ -59,7 +68,8 @@ go run ./cmd/reach discover -window last-hour -top 30 -out today.ranked.json
 go run ./cmd/reach discover -from testdata/linkedin_search.json   # offline, from saved results
 ```
 
-Topics, their search phrases, and which project pages each may link to live in [`config/topics.json`](config/topics.json).
+[`config/topics.json`](config/topics.json) holds the thresholds, the topics with their search phrases and matching
+projects, and `own_posts`: my LinkedIn posts a comment may link to (`{"url": …, "about": "one line"}`).
 
 ## Layout
 

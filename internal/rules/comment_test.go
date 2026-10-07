@@ -46,3 +46,13 @@ func TestCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireLink(t *testing.T) {
+	p := Policy{MaxChars: 200, AllowedLinks: []string{"https://example.dev/"}, RequireLink: true}
+	if v := Check("A useful point about adoption.", p, nil); len(v) != 1 || v[0].Rule != "no link" {
+		t.Fatalf("want a no-link violation, got %v", v)
+	}
+	if v := Check("A useful point about adoption. https://example.dev/projects/x/", p, nil); len(v) != 0 {
+		t.Fatalf("want no violations, got %v", v)
+	}
+}
