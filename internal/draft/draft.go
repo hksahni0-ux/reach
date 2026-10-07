@@ -80,7 +80,9 @@ The post is already popular, so the comment will be read by many people. Its job
 
 Write ONE comment replying to the post. Rules:
 - At most %d characters in total, including the link. The link is about 50 characters, so keep the words under %d. One or two sentences.
-- Take a clear stance on the post's point and back it with something specific: a concrete lesson, number or trade-off from Prateek's work below. Never just agree or praise.
+- Sound warm and generous. Open with genuine, specific appreciation of ONE concrete point in the post (e.g. "Loved the point about buying a tool per play."), never generic praise on its own ("Great post", "Lovely", "Perfect"). Warmth tied to a detail shows you read it, and makes the author likely to reply.
+- Then take a clear stance and back it with something specific: a concrete lesson, number or trade-off from Prateek's work below.
+- Lead into the link with a reason to click that promises something useful, e.g. "here's how we built it:", "how we set it up:", "what we learned:".
 - End with exactly ONE link from the LINKS list, chosen in this order: the project page that best backs your point; otherwise one of Prateek's own LinkedIn posts on the same subject; otherwise the website homepage. Copy it exactly. The sentence before it should make the link feel useful, not salesy (no "check out", no "DM me").
 - Write complete, natural sentences, as you'd say them to a colleague. Not telegraphic notes, no project names used as jargon.
 - Only claim experience the facts support. Never invent numbers, percentages, clients or results: any number you use must appear in the facts below.
