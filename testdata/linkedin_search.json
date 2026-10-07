@@ -1,0 +1,37 @@
+{
+  "has_more": true,
+  "query": "AI agents",
+  "success": true,
+  "next_cursor": "c.v1.test",
+  "items": [
+    {
+      "url": "https://ca.linkedin.com/posts/example-author_four-layers-for-ai-agents-activity-7000000000000000001-AAAA?utm_source=share",
+      "description": "These are the 4 layers required for AI agents to operate effectively in the enterprise:\n\n1. Definitions\n2. Knowledge",
+      "like_count": 55,
+      "comment_count": 42,
+      "date_published": "2026-10-07T15:00:43.142Z",
+      "author": { "name": "Example Author", "url": "https://ca.linkedin.com/in/example-author", "followers": 76899 },
+      "comments": [
+        { "author": "Commenter One", "linkedin_url": "https://www.linkedin.com/in/commenter-one", "text": "Where reasoning meets guardrails, there's one decision layer missing." }
+      ]
+    },
+    {
+      "url": "https://uk.linkedin.com/posts/second-author_what-an-ai-agent-is-activity-7000000000000000002-BBBB",
+      "description": "Most people are talking about AI agents before they understand what an AI agent actually is.",
+      "like_count": 37,
+      "comment_count": 38,
+      "date_published": "2026-10-07T07:04:29.209Z",
+      "author": { "name": "Second Author", "url": "https://uk.linkedin.com/in/second-author", "followers": 12895 },
+      "comments": []
+    },
+    {
+      "url": "https://www.linkedin.com/posts/no-date_post-activity-7000000000000000003-CCCC",
+      "description": "A post the search returned without a date.",
+      "like_count": 900,
+      "comment_count": 10,
+      "date_published": "",
+      "author": { "name": "No Date", "url": "https://www.linkedin.com/in/no-date", "followers": 100 },
+      "comments": []
+    }
+  ]
+}

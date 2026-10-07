@@ -1,0 +1,6 @@
+# Secrets stay out of the repo: locally in .env, on GitHub as Actions secrets.
+.env
+# Build output and run artefacts
+/reach
+*.ranked.json
+out/
