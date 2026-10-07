@@ -39,6 +39,7 @@ type config struct {
 }
 
 func main() {
+	loadDotEnv(".env")
 	if len(os.Args) < 2 {
 		usage()
 	}
@@ -303,6 +304,25 @@ func notQueued(posts []discover.Post, queued map[string]bool) []discover.Post {
 		}
 	}
 	return out
+}
+
+// loadDotEnv sets KEY=value lines from a local .env file, without overriding anything already
+// set (on GitHub Actions the values come from secrets and there is no file).
+func loadDotEnv(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k = strings.TrimSpace(k); os.Getenv(k) == "" {
+			os.Setenv(k, strings.Trim(strings.TrimSpace(v), `"'`))
+		}
+	}
 }
 
 func need(names ...string) (map[string]string, error) {
