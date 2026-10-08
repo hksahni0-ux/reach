@@ -1,11 +1,10 @@
-# Finds near-viral posts and queues drafted comments each weekday morning. Posting is done
-# by hand with `reach assist` (LinkedIn's comment API is partner-only). Also startable by
-# hand or from Apps Script through workflow_dispatch. Needs repository secrets:
+# Finds near-viral posts and queues drafted comments. Started each weekday morning by the
+# Apps Script in appscript/Code.gs (GitHub's own schedule trigger never fired for this repo),
+# from the Sheet's Reach menu, or by hand. Posting is done by hand with `reach assist`
+# (LinkedIn's comment API is partner-only). Needs repository secrets:
 # COMPOSIO_API_KEY, COMPOSIO_USER_ID, NVIDIA_API_KEY, SHEET_ID, YOUTUBE_API_KEY.
 name: run
 on:
-  schedule:
-    - cron: "15 7 * * 1-5" # 08:15 UK summer time
   workflow_dispatch:
 permissions:
   contents: read

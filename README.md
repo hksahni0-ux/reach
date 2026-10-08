@@ -53,8 +53,10 @@ broken rules listed (up to three tries); one that still fails goes to the Sheet 
 7. **Post.** `reach assist` copies each approved comment, opens its post, and marks the row "posted" once I've pasted
    it and pressed Enter.
 
-[`.github/workflows/run.yml`](.github/workflows/run.yml) drafts each weekday morning, and can be started by hand or
-from Apps Script.
+[`.github/workflows/run.yml`](.github/workflows/run.yml) does steps 1 to 5. [`appscript/Code.gs`](appscript/Code.gs), in
+the approval Sheet, starts it each weekday around 08:15 UK time (at most once a day) and adds a **Reach → Find posts
+now** menu; GitHub's own schedule trigger never fired for this repo, so it isn't used. Setup steps are at the top of
+the file.
 
 ## Use
 
@@ -84,6 +86,7 @@ internal/llm/         NVIDIA model chain with fallback
 internal/draft/       writing comments from real project facts, checking, retrying
 internal/queue/       the Google Sheet approval queue
 config/topics.json    topics, search phrases, linkable projects
+appscript/Code.gs     Apps Script for the Sheet: weekday trigger and Reach menu (starts run.yml)
 testdata/             fixtures (fictional authors)
 ```
 
