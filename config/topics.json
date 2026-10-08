@@ -10,9 +10,9 @@
     "per_query": 50
   },
   "youtube": {
-    "min_views": 100000,
+    "min_views": 10000,
     "min_likes": 0,
-    "min_comments": 200,
+    "min_comments": 20,
     "per_query": 5
   },
   "queries_per_topic": 1,
