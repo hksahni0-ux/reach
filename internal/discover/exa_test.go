@@ -57,3 +57,21 @@ func TestApplyPostDetail(t *testing.T) {
 		t.Fatalf("unexpected post %+v", p)
 	}
 }
+
+func TestApplyExaContents(t *testing.T) {
+	posts := []Post{{URL: "https://www.linkedin.com/posts/jw_slug-activity-7513565885429694465-DDfX"}, {URL: "https://www.linkedin.com/posts/b_x-activity-7513565885429694466"}}
+	raw := json.RawMessage(`{"results":[
+		{"url":"https://www.linkedin.com/posts/jw_slug-activity-7513565885429694465-DDfX","author":"Justin Welsh",
+		 "title":"When I started my business, everything was my job.\n- Writing… | Justin Welsh | 1,810 comments"},
+		{"url":"https://www.linkedin.com/posts/b_x-activity-7513565885429694466","title":"Bob's Post"}]}`)
+	got, err := ApplyExaContents(posts, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Comments != 1810 || got[0].AuthorName != "Justin Welsh" || got[0].Text != "When I started my business, everything was my job.\n- Writing…" {
+		t.Fatalf("got %+v", got[0])
+	}
+	if got[1].Comments != 0 || got[1].Text != "Bob's Post" {
+		t.Fatalf("got %+v", got[1])
+	}
+}

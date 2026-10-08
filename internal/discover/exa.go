@@ -203,3 +203,72 @@ func Enrich(ctx context.Context, ex composio.Executor, posts []Post, limit int) 
 	}
 	return out, errs
 }
+
+const exaContentsSlug = "EXA_GET_CONTENTS_ACTION"
+
+// "… | Author Name | 810 comments" at the end of a LinkedIn post page's title.
+var titleCounts = regexp.MustCompile(`\|\s*([^|]+?)\s*\|\s*([\d,]+)\s+comments?\s*$`)
+
+type exaContents struct {
+	Results []struct {
+		URL    string `json:"url"`
+		Title  string `json:"title"`
+		Author string `json:"author"`
+	} `json:"results"`
+}
+
+// ApplyExaContents fills author, comment count and opening text from Exa's page contents,
+// matched by URL. A post whose page shows no comment count keeps 0 comments.
+func ApplyExaContents(posts []Post, raw json.RawMessage) ([]Post, error) {
+	var c exaContents
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return posts, fmt.Errorf("parsing Exa contents: %w", err)
+	}
+	byURL := map[string]int{}
+	for i, p := range posts {
+		byURL[p.URL] = i
+	}
+	for _, r := range c.Results {
+		i, ok := byURL[canonicalLinkedInURL(r.URL)]
+		if !ok {
+			continue
+		}
+		p := &posts[i]
+		if r.Author != "" {
+			p.AuthorName = r.Author
+		}
+		title := strings.TrimSpace(r.Title)
+		if m := titleCounts.FindStringSubmatch(title); m != nil {
+			if p.AuthorName == "" {
+				p.AuthorName = m[1]
+			}
+			p.Comments, _ = strconv.Atoi(strings.ReplaceAll(m[2], ",", ""))
+			title = strings.TrimSpace(title[:len(title)-len(m[0])])
+		}
+		if title != "" {
+			p.Text = title
+		}
+	}
+	return posts, nil
+}
+
+// ExaCounts reads every post's page through Exa (about $0.001 each, no ScrapeCreators credits)
+// to get its comment count and author. Exa can't see likes, so comments are the virality signal.
+func ExaCounts(ctx context.Context, ex composio.Executor, posts []Post) ([]Post, []error) {
+	var errs []error
+	for start := 0; start < len(posts); start += 25 {
+		end := min(start+25, len(posts))
+		ids := make([]string, 0, end-start)
+		for _, p := range posts[start:end] {
+			ids = append(ids, p.URL)
+		}
+		raw, err := ex.Execute(ctx, exaContentsSlug, map[string]any{"ids": ids, "text": false})
+		if err == nil {
+			_, err = ApplyExaContents(posts[start:end], raw)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("Exa contents: %w", err))
+		}
+	}
+	return posts, errs
+}

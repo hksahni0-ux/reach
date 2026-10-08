@@ -4,8 +4,17 @@
     "prateek-sahni-meng"
   ],
   "max_comment_chars": 200,
-  "min_likes": 100,
-  "min_comments": 20,
+  "linkedin": {
+    "min_likes": 0,
+    "min_comments": 30,
+    "per_query": 50
+  },
+  "youtube": {
+    "min_views": 100000,
+    "min_likes": 0,
+    "min_comments": 200,
+    "per_query": 5
+  },
   "queries_per_topic": 1,
   "own_posts": [],
   "topics": [

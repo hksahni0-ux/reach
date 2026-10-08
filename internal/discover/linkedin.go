@@ -20,7 +20,8 @@ type Post struct {
 	AuthorName      string    `json:"author_name"`
 	AuthorURL       string    `json:"author_url"`
 	AuthorFollowers int       `json:"author_followers"`
-	Text            string    `json:"text"` // opening of the post (search results are truncated)
+	Text            string    `json:"text"`            // opening of the post (search results are truncated)
+	Views           int       `json:"views,omitempty"` // YouTube only
 	Likes           int       `json:"likes"`
 	Comments        int       `json:"comments"`
 	Published       time.Time `json:"published"`

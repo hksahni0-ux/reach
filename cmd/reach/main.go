@@ -1,7 +1,7 @@
 // Command reach finds near-viral posts to comment on, drafts short comments for approval,
 // and helps post the approved ones. See README.md.
 //
-//	reach run      [-source scrapecreators|exa] [-drafts 5] [-dry]   find, rank, draft, queue in the Sheet
+//	reach run      [-platforms linkedin,youtube] [-drafts 5] [-dry]   find, rank, draft, queue in the Sheet
 //	reach assist                                                    copy each approved comment and open its post
 //	reach discover [-window last-day] [-top 15] [-out ranked.json] [-from file.json…]
 package main
@@ -31,11 +31,23 @@ type config struct {
 	Site            string           `json:"site"`
 	ExcludeAuthors  []string         `json:"exclude_authors"`
 	MaxCommentChars int              `json:"max_comment_chars"`
-	MinLikes        int              `json:"min_likes"`         // only near-viral posts get a comment
-	MinComments     int              `json:"min_comments"`      // and ones where people are talking
-	QueriesPerTopic int              `json:"queries_per_topic"` // ScrapeCreators searches cost 1 credit each
+	LinkedIn        platform         `json:"linkedin"`
+	YouTube         platform         `json:"youtube"`
+	QueriesPerTopic int              `json:"queries_per_topic"` // for -source scrapecreators: 1 credit per phrase
 	OwnPosts        []draft.OwnPost  `json:"own_posts"`         // Prateek's posts a comment may link to
 	Topics          []discover.Topic `json:"topics"`
+}
+
+// platform holds one platform's thresholds: only posts past all of them get a comment.
+type platform struct {
+	MinViews    int `json:"min_views,omitempty"`
+	MinLikes    int `json:"min_likes"`
+	MinComments int `json:"min_comments"`
+	PerQuery    int `json:"per_query"` // search results per phrase
+}
+
+func (pl platform) passes(p discover.Post) bool {
+	return p.Views >= pl.MinViews && p.Likes >= pl.MinLikes && p.Comments >= pl.MinComments
 }
 
 func main() {
@@ -61,7 +73,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: reach run [-config config/topics.json] [-source scrapecreators|exa] [-drafts 5] [-dry]")
+	fmt.Fprintln(os.Stderr, "usage: reach run [-config config/topics.json] [-platforms linkedin,youtube] [-source exa|scrapecreators] [-drafts 5] [-dry]")
 	fmt.Fprintln(os.Stderr, "       reach assist")
 	fmt.Fprintln(os.Stderr, "       reach discover [-config config/topics.json] [-window last-day] [-top 15] [-out file.json] [-from saved-search.json …]")
 	os.Exit(2)
@@ -127,21 +139,21 @@ func runDiscover(args []string) error {
 	return nil
 }
 
-// runCycle is one scheduled run: find posts from the last day that are already taking off,
-// keep only those past the like and comment thresholds, draft a comment with a link for the
+// runCycle is one scheduled run: find posts and videos from the last day that are already
+// taking off, keep those past each platform's thresholds, draft a comment with a link for the
 // best few, and add them to the approval Sheet. Nothing is posted here.
 //
-// ScrapeCreators (default) returns likes and comments with each search, so near-viral posts
-// can be picked out for 1 credit per phrase. Exa is free but blind to engagement, so with
-// -source exa only the newest few are looked up (1 credit each) and filtered.
+// Both default sources are free. LinkedIn: Exa finds posts and reads each page's comment count
+// (Exa can't see likes, so comments are the signal). YouTube: the Data API with Prateek's key,
+// sorted by views. -source scrapecreators uses ScrapeCreators for LinkedIn instead (likes and
+// comments, 1 credit per phrase).
 func runCycle(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("config", "config/topics.json", "topics and settings")
-	source := fs.String("source", "scrapecreators", "where to find posts: scrapecreators or exa")
+	platforms := fs.String("platforms", "linkedin,youtube", "comma-separated: linkedin, youtube")
+	source := fs.String("source", "exa", "LinkedIn source: exa (free) or scrapecreators (credits)")
 	hours := fs.Int("hours", 24, "only posts from the last this many hours")
-	perQuery := fs.Int("per-query", 10, "Exa results per search phrase (-source exa)")
-	enrich := fs.Int("enrich", 5, "posts to look up on ScrapeCreators, 1 credit each (-source exa)")
-	drafts := fs.Int("drafts", 5, "comments to draft")
+	drafts := fs.Int("drafts", 5, "comments to draft per platform")
 	tries := fs.Int("tries", 3, "attempts per draft to pass the comment rules")
 	dry := fs.Bool("dry", false, "print the drafts instead of adding them to the Sheet")
 	fs.Parse(args)
@@ -159,7 +171,7 @@ func runCycle(args []string) error {
 		return fmt.Errorf("SHEET_ID is not set (or use -dry)")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	cx := composio.New(env["COMPOSIO_API_KEY"], env["COMPOSIO_USER_ID"])
 	sheet := queue.Sheet{Ex: cx, ID: sheetID}
@@ -170,36 +182,61 @@ func runCycle(args []string) error {
 			return fmt.Errorf("reading the Sheet: %w", err)
 		}
 	}
+	since := time.Now().Add(-time.Duration(*hours) * time.Hour)
 
-	var found []discover.Post
-	var errs []error
-	switch *source {
-	case "scrapecreators":
-		found, errs = discover.LinkedIn(ctx, cx, firstQueries(cfg.Topics, cfg.QueriesPerTopic), "last-day")
-	case "exa":
-		var stubs []discover.Post
-		stubs, errs = discover.ExaLinkedIn(ctx, cx, cfg.Topics, time.Now().Add(-time.Duration(*hours)*time.Hour), *perQuery)
-		warn(errs)
-		stubs = notQueued(stubs, queued)
-		found, errs = discover.Enrich(ctx, cx, stubs, *enrich)
-	default:
-		return fmt.Errorf("unknown -source %q", *source)
-	}
-	warn(errs)
-
-	var hot []discover.Post
-	for _, p := range notQueued(found, queued) {
-		if p.Likes >= cfg.MinLikes && p.Comments >= cfg.MinComments {
-			hot = append(hot, p)
+	var ranked []rank.Scored
+	for _, name := range strings.Split(*platforms, ",") {
+		var (
+			found []discover.Post
+			errs  []error
+			pl    platform
+		)
+		switch strings.TrimSpace(name) {
+		case "linkedin":
+			pl = cfg.LinkedIn
+			if *source == "scrapecreators" {
+				found, errs = discover.LinkedIn(ctx, cx, firstQueries(cfg.Topics, cfg.QueriesPerTopic), "last-day")
+			} else {
+				var stubs []discover.Post
+				stubs, errs = discover.ExaLinkedIn(ctx, cx, cfg.Topics, since, max(pl.PerQuery, 10))
+				warn(errs)
+				found, errs = discover.ExaCounts(ctx, cx, notQueued(stubs, queued))
+			}
+		case "youtube":
+			pl = cfg.YouTube
+			key := os.Getenv("YOUTUBE_API_KEY")
+			if key == "" {
+				fmt.Fprintln(os.Stderr, "youtube: skipped, YOUTUBE_API_KEY is not set")
+				continue
+			}
+			found, errs = discover.NewYouTube(key).Videos(ctx, cfg.Topics, since, max(pl.PerQuery, 5))
+		default:
+			return fmt.Errorf("unknown platform %q", name)
 		}
-	}
-	fmt.Fprintf(os.Stderr, "%s: %d posts, %d new with %d+ likes and %d+ comments\n", *source, len(found), len(hot), cfg.MinLikes, cfg.MinComments)
-	ranked := rank.Rank(hot, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
-	if len(ranked) > *drafts {
-		ranked = ranked[:*drafts]
+		warn(errs)
+
+		var hot []discover.Post
+		for _, p := range notQueued(found, queued) {
+			if pl.passes(p) {
+				hot = append(hot, p)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "%s: %d found, %d new past %d+ views, %d+ likes, %d+ comments\n",
+			name, len(found), len(hot), pl.MinViews, pl.MinLikes, pl.MinComments)
+		best := rank.Rank(hot, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
+		if len(best) > *drafts {
+			best = best[:*drafts]
+		}
+		if name == "youtube" {
+			yt := discover.NewYouTube(os.Getenv("YOUTUBE_API_KEY"))
+			for i := range best {
+				best[i].Post = yt.TopComments(ctx, best[i].Post, 5)
+			}
+		}
+		ranked = append(ranked, best...)
 	}
 	if len(ranked) == 0 {
-		fmt.Fprintln(os.Stderr, "nothing near-viral this run; lower min_likes or min_comments in the config to cast wider")
+		fmt.Fprintln(os.Stderr, "nothing viral enough this run; lower the thresholds in the config to cast wider")
 		return nil
 	}
 	printTable(ranked)
@@ -221,7 +258,13 @@ func runCycle(args []string) error {
 	var rows [][]any
 	for _, p := range ranked {
 		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]),
-			draft.Options{Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts})
+			draft.Options{Platform: p.Platform, Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts})
+		if len(d.Violations) > 0 && d.Violations[0].Rule == "model" {
+			// Every model failed (overloaded, timed out): leave the post out of the Sheet so the
+			// next run can try it again, rather than queueing an empty draft.
+			fmt.Fprintf(os.Stderr, "\n%s\n  skipped, no model answered: %s\n", p.URL, oneLine(d.Violations[0].Detail, 160))
+			continue
+		}
 		status := "ok"
 		if len(d.Violations) > 0 {
 			status = "needs edit: " + d.Violations[0].String()
@@ -359,10 +402,10 @@ func loadConfig(path string) (config, error) {
 
 func printTable(ranked []rank.Scored) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "#\tSCORE\tAGE\tLIKES\tCMTS\tFOLLOWERS\tTOPIC\tAUTHOR\tOPENING")
+	fmt.Fprintln(w, "#\tWHERE\tSCORE\tAGE\tVIEWS\tLIKES\tCMTS\tTOPIC\tAUTHOR\tOPENING")
 	for i, p := range ranked {
-		fmt.Fprintf(w, "%d\t%.1f\t%.0fh\t%d\t%d\t%d\t%s\t%s\t%s\n",
-			i+1, p.Score, p.AgeHours, p.Likes, p.Comments, p.AuthorFollowers, p.Topic, p.AuthorName, oneLine(p.Text, 60))
+		fmt.Fprintf(w, "%d\t%s\t%.1f\t%.0fh\t%d\t%d\t%d\t%s\t%s\t%s\n",
+			i+1, p.Platform, p.Score, p.AgeHours, p.Views, p.Likes, p.Comments, p.Topic, p.AuthorName, oneLine(p.Text, 60))
 	}
 	w.Flush()
 }

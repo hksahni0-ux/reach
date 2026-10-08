@@ -1,7 +1,7 @@
 # Finds near-viral posts and queues drafted comments each weekday morning. Posting is done
 # by hand with `reach assist` (LinkedIn's comment API is partner-only). Also startable by
 # hand or from Apps Script through workflow_dispatch. Needs repository secrets:
-# COMPOSIO_API_KEY, COMPOSIO_USER_ID, NVIDIA_API_KEY, SHEET_ID.
+# COMPOSIO_API_KEY, COMPOSIO_USER_ID, NVIDIA_API_KEY, SHEET_ID, YOUTUBE_API_KEY.
 name: run
 on:
   schedule:
@@ -21,6 +21,7 @@ jobs:
       COMPOSIO_USER_ID: ${{ secrets.COMPOSIO_USER_ID }}
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       SHEET_ID: ${{ secrets.SHEET_ID }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

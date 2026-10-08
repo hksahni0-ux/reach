@@ -72,7 +72,7 @@ type Draft struct {
 	Violations []rules.Violation `json:"violations,omitempty"` // non-empty means it failed every try
 }
 
-const system = `You write LinkedIn comments for Prateek Sahni, a UK-based engineer who builds AI agents, CRMs and sales automation and has a background in additive manufacturing.
+const system = `You write %s comments for Prateek Sahni, a UK-based engineer who builds AI agents, CRMs and sales automation and has a background in additive manufacturing.
 
 You ARE Prateek, writing in the first person. The post's author is someone else: never describe their background as Prateek's, and never attribute Prateek's experience to them.
 
@@ -100,10 +100,20 @@ type OwnPost struct {
 
 // Options are the settings Write needs beyond the post itself.
 type Options struct {
+	Platform string // "linkedin" (default) or "youtube"
 	Site     string
 	MaxChars int
 	Tries    int
 	OwnPosts []OwnPost
+}
+
+func systemPrompt(o Options) string {
+	name, extra := "LinkedIn", ""
+	if o.Platform == "youtube" {
+		name = "YouTube"
+		extra = "\n\nThis is a comment under a YouTube video; the text given is the video's title and description. Speak to the video's point, as a viewer who watched it, and keep it conversational."
+	}
+	return fmt.Sprintf(system, name, o.MaxChars, o.MaxChars-linkBudget) + extra
 }
 
 // linkBudget is the room a link takes, so the prompt can tell the model how many words fit.
@@ -120,7 +130,7 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, o 
 	policy := rules.Policy{MaxChars: o.MaxChars, AllowedLinks: allowed, RequireLink: true}
 	facts := userPrompt(p, projects, o)
 	msgs := []llm.Message{
-		{Role: "system", Content: fmt.Sprintf(system, o.MaxChars, o.MaxChars-linkBudget)},
+		{Role: "system", Content: systemPrompt(o)},
 		{Role: "user", Content: facts},
 	}
 	var d Draft
