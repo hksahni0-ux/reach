@@ -35,7 +35,7 @@ func TestVideosSearchesThenFetchesStats(t *testing.T) {
 			}
 			w.Write([]byte(`{"items":[{"id":{"videoId":"v1"}},{"id":{"videoId":"v1"}}]}`))
 		case "/videos":
-			w.Write([]byte(`{"items":[{"id":"v1","snippet":{"publishedAt":"2026-10-07T10:00:00Z","title":"T"},"statistics":{"viewCount":"9"}}]}`))
+			w.Write([]byte(`{"items":[{"id":"v1","snippet":{"publishedAt":"2026-10-07T10:00:00Z","title":"T","defaultAudioLanguage":"en"},"statistics":{"viewCount":"9"}}]}`))
 		}
 	}))
 	defer srv.Close()
@@ -56,5 +56,27 @@ func TestYouTubeErrorsHideTheKey(t *testing.T) {
 	_, errs := y.Videos(context.Background(), []Topic{{Name: "t", Queries: []string{"q"}}}, time.Now(), 5)
 	if len(errs) != 1 || strings.Contains(errs[0].Error(), "secret-k") {
 		t.Fatalf("errors should hide the key: %v", errs)
+	}
+}
+
+func TestParseVideosKeepsEnglishOnly(t *testing.T) {
+	raw := json.RawMessage(`{"items":[
+		{"id":"en1","snippet":{"title":"What is the Lethal Trifecta in AI Agents?","description":"How data can leak"}},
+		{"id":"en2","snippet":{"title":"Kurzes Video","defaultAudioLanguage":"en-GB"}},
+		{"id":"es","snippet":{"title":"ROILAN ME TRAJO RELOJES, ORO Y HASTA SUS GAFAS… ¿NECESITA EFECTIVO?","description":"Compramos oro y relojes"}},
+		{"id":"pl","snippet":{"title":"Ulepszyłem STANOWISKO GAMINGOWE Drukarką 3D... Dziś testuje","description":"Drukarka 3D w akcji"}},
+		{"id":"hi","snippet":{"title":"AI एजेंट क्या है? पूरी जानकारी"}},
+		{"id":"hiaudio","snippet":{"title":"What is this Muse tool of Instagram? Is it agentic AI?","defaultAudioLanguage":"hi"}},
+		{"id":"te","snippet":{"title":"ఇంజనీరింగ్ అభ్యర్థులకు బిగ్ అలర్ట్! | MECON Limited Project Contract Engineer Recruitment 2026","defaultLanguage":"en"}}]}`)
+	posts, err := ParseVideos(raw, "AI agents")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range posts {
+		got = append(got, strings.TrimPrefix(p.URL, "https://www.youtube.com/watch?v="))
+	}
+	if strings.Join(got, ",") != "en1,en2" {
+		t.Fatalf("kept %v, want only the English videos en1,en2", got)
 	}
 }

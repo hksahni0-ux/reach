@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // YouTube finds viral videos through the YouTube Data API with Prateek's own key. (Composio's
@@ -96,6 +97,9 @@ type videoList struct {
 			ChannelID    string `json:"channelId"`
 			Title        string `json:"title"`
 			Description  string `json:"description"`
+			// Language codes such as "en", "en-GB" or "hi"; often missing.
+			DefaultLanguage      string `json:"defaultLanguage"`
+			DefaultAudioLanguage string `json:"defaultAudioLanguage"`
 		} `json:"snippet"`
 		Statistics struct {
 			ViewCount    string `json:"viewCount"`
@@ -105,7 +109,7 @@ type videoList struct {
 	} `json:"items"`
 }
 
-// ParseVideos turns a videos.list response into Posts.
+// ParseVideos turns a videos.list response into Posts, keeping English videos only (see English).
 func ParseVideos(raw json.RawMessage, topic string) ([]Post, error) {
 	var v videoList
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -113,6 +117,9 @@ func ParseVideos(raw json.RawMessage, topic string) ([]Post, error) {
 	}
 	posts := make([]Post, 0, len(v.Items))
 	for _, it := range v.Items {
+		if !English(it.Snippet.DefaultAudioLanguage, it.Snippet.DefaultLanguage, it.Snippet.Title, it.Snippet.Description) {
+			continue
+		}
 		published, _ := time.Parse(time.RFC3339, it.Snippet.PublishedAt)
 		n := func(s string) int { i, _ := strconv.Atoi(s); return i }
 		text := it.Snippet.Title
@@ -170,4 +177,61 @@ func (y *YouTube) TopComments(ctx context.Context, p Post, n int) Post {
 		}
 	}
 	return p
+}
+
+// Common English words that rarely appear in other languages' titles. ("a", "no" and "me"
+// are left out: they are words in Spanish too.)
+var englishWords = map[string]bool{
+	"the": true, "and": true, "is": true, "are": true, "to": true, "of": true, "for": true, "with": true,
+	"this": true, "that": true, "these": true, "how": true, "what": true, "why": true, "when": true,
+	"you": true, "your": true, "it": true, "its": true, "my": true, "we": true, "our": true, "they": true,
+	"can": true, "will": true, "from": true, "about": true, "just": true, "have": true, "has": true,
+	"was": true, "be": true, "in": true, "at": true, "by": true, "an": true, "or": true, "do": true,
+	"does": true, "not": true, "more": true, "using": true, "now": true, "get": true, "into": true,
+	"every": true, "should": true, "need": true, "best": true, "new": true,
+}
+
+// English reports whether a video is in English, which is the only language Reach comments
+// in. A non-English language code from YouTube (audio first) rules a video out. Uploaders
+// often mislabel videos as English, though, so the title and description must also be in
+// Latin script, and, unless tagged English, use common English words.
+// relevanceLanguage=en on the search only nudges results, so this does the filtering.
+func English(audioLang, lang, title, description string) bool {
+	tagged := false
+	for _, code := range []string{audioLang, lang} {
+		if code = strings.ToLower(strings.TrimSpace(code)); code != "" {
+			if code != "en" && !strings.HasPrefix(code, "en-") {
+				return false
+			}
+			tagged = true
+			break
+		}
+	}
+	text := title + " " + description
+	if len(text) > 600 {
+		text = text[:600]
+	}
+	letters, latin := 0, 0
+	for _, r := range text {
+		if unicode.IsLetter(r) {
+			letters++
+			if r < 0x80 {
+				latin++
+			}
+		}
+	}
+	if letters == 0 || latin*100 < letters*95 { // other scripts, or accented languages (Polish, Spanish, ...)
+		return false
+	}
+	if tagged {
+		return true
+	}
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !unicode.IsLetter(r) && r != '\'' })
+	hits := 0
+	for _, w := range words {
+		if englishWords[w] {
+			hits++
+		}
+	}
+	return hits >= 2 || (hits == 1 && len(words) <= 8)
 }

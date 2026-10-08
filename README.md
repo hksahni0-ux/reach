@@ -43,7 +43,9 @@ broken rules listed (up to three tries); one that still fails goes to the Sheet 
 1. **Find.** ScrapeCreators searches one phrase per topic for LinkedIn posts from the last day (1 credit each), with
    likes and comments. (`-source exa` finds posts free through Exa instead, then looks up the newest few at 1 credit
    each; Exa can't see engagement, so it's worse at finding near-viral posts.)
-2. **Filter** to posts past the like and comment thresholds that aren't already in the Sheet.
+2. **Filter** to posts past the like and comment thresholds that aren't already in the Sheet. YouTube videos must be in English: a
+   non-English language tag rules one out, and the title must be in Latin script and read as English
+   (`discover.English`), since uploaders often mislabel videos.
 3. **Rank** as above, and keep the best few (`-drafts 5`).
 4. **Draft.** Comments are written from the projects the website publishes at `/portfolio.json`, so they only cite
    real work, and end with one link. Models are tried in order on NVIDIA's API until one answers: Nemotron 3 Ultra,
