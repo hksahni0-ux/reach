@@ -6,7 +6,7 @@
   "max_comment_chars": 200,
   "linkedin": {
     "min_likes": 0,
-    "min_comments": 30,
+    "min_comments": 20,
     "per_query": 50
   },
   "youtube": {

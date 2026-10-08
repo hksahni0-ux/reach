@@ -10,8 +10,9 @@ and I post each one myself.**
 - **Approval before posting, and I post.** LinkedIn's terms don't allow bots to comment on their own, and its comment
   API is open only to approved partners. The tool does the finding and drafting; `reach assist` copies each approved
   comment and opens the post, so posting takes a paste and a click.
-- **Only near-viral posts.** Under a day old, with 100+ likes and 20+ comments (`min_likes`, `min_comments`), so a
-  good comment is seen by many people.
+- **Only near-viral posts.** Under a day old, with 20+ comments on every platform (`min_comments`), and YouTube videos
+  also need 10,000+ views (`min_views`). Likes aren't required (`min_likes` is 0), since free discovery can't see them.
+  That way a good comment is seen by many people.
 - **Short comments, always with one link.** At most 200 characters including the link. The link is the project page
   that backs the point, else one of my own LinkedIn posts on the subject, else the website.
 - **Comment early on posts that are climbing.** A fresh post gaining likes quickly beats a big post from yesterday.
@@ -31,8 +32,8 @@ Posts older than 24 hours, posts without a date and my own posts are skipped.
 ## Comment rules
 
 A draft goes to the queue only if it passes every rule in [`internal/rules`](internal/rules/comment.go):
-150 characters or fewer · no generic opener ("Great post!") · no hype or sales words · no hashtags · no em dashes ·
-at most one emoji · at most one link, HTTPS, to an allowed page · not a near-copy of a comment already on the post.
+200 characters or fewer, link included (`max_comment_chars`) · no generic opener ("Great post!") · no hype or sales words · no hashtags · no em dashes ·
+at most one emoji · exactly one link, HTTPS, to an allowed page · not a near-copy of a comment already on the post.
 [`internal/draft`](internal/draft/draft.go) adds one more: every number in a comment must appear in the post or in
 the project facts, the commonest way a model invents a result. A draft that breaks a rule is sent back with the
 broken rules listed (up to three tries); one that still fails goes to the Sheet as "needs edit".
