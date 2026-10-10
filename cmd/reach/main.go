@@ -251,14 +251,21 @@ func runCycle(args []string) error {
 	}
 	ai := llm.New(env["NVIDIA_API_KEY"], models)
 	byTopic := map[string][]string{}
+	byName := map[string]discover.Topic{}
 	for _, t := range cfg.Topics {
 		byTopic[t.Name] = t.Projects
+		byName[t.Name] = t
 	}
 
 	var rows [][]any
 	for _, p := range ranked {
 		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]),
-			draft.Options{Platform: p.Platform, Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts})
+			draft.Options{Platform: p.Platform, Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts,
+				Angle: byName[p.Topic].Angle, Links: byName[p.Topic].Links})
+		if d.Skipped {
+			fmt.Fprintf(os.Stderr, "\n%s\n  skipped: not a good place for this comment (%s)\n", p.URL, oneLine(p.Text, 60))
+			continue
+		}
 		if len(d.Violations) > 0 && d.Violations[0].Rule == "model" {
 			// Every model failed (overloaded, timed out): leave the post out of the Sheet so the
 			// next run can try it again, rather than queueing an empty draft.

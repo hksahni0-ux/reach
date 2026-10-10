@@ -99,3 +99,27 @@ func TestShortPostURL(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestWriteAcceptsTopicLinksAndAngle(t *testing.T) {
+	c := &scripted{answers: []string{"Two hundred applications and silence is exhausting. I built a tool that tailors and applies for you, free to try: https://app.example.dev"}}
+	o := opts(1)
+	o.Angle = "be kind"
+	o.Links = []discover.Link{{URL: "https://app.example.dev", About: "the live app"}}
+	d := Write(context.Background(), c, post(), nil, o)
+	if len(d.Violations) != 0 {
+		t.Fatalf("the topic's link should be allowed, got %+v", d)
+	}
+	sys := c.calls[0][0].Content
+	user := c.calls[0][1].Content
+	if !strings.Contains(sys, "FOR THIS KIND OF POST: be kind") || !strings.Contains(user, "PREFERRED, the live app: https://app.example.dev") {
+		t.Fatalf("angle or preferred link missing from the prompt")
+	}
+}
+
+func TestWriteSkipsWhenTheModelSaysSo(t *testing.T) {
+	c := &scripted{answers: []string{"SKIP"}}
+	d := Write(context.Background(), c, post(), nil, opts(3))
+	if !d.Skipped || d.Comment != "" || d.Attempts != 1 {
+		t.Fatalf("want a skipped draft after one attempt, got %+v", d)
+	}
+}

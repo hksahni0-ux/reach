@@ -97,6 +97,31 @@
         "job-agent",
         "portfolio-site"
       ]
+    },
+    {
+      "name": "Job seekers",
+      "queries": [
+        "job search",
+        "laid off",
+        "open to work",
+        "applied to hundreds of jobs",
+        "job hunting",
+        "ghosted after interview",
+        "job rejection",
+        "unemployed looking for work",
+        "resume tips",
+        "how to get a job"
+      ],
+      "projects": [
+        "job-agent"
+      ],
+      "angle": "The author (or the audience) is going through a tough job search: layoffs, hundreds of applications, ghosting. Open with real common ground on the specific frustration they describe, in one short sentence, warm but not pitying. Then one brief line on JobBot: it tailors your CV and cover letter to each role and applies on the employer's site for you, with a free trial. No promises of interviews or jobs, no urgency, no 'DM me'. Never mock or play on their distress. Don't claim Prateek was unemployed or struggling himself.",
+      "links": [
+        {
+          "url": "https://jobbotapp.pages.dev",
+          "about": "JobBot, the live app (free trial: 10 applications in 3 days, no card)"
+        }
+      ]
     }
   ]
 }

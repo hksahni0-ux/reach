@@ -32,7 +32,15 @@ type Post struct {
 type Topic struct {
 	Name     string   `json:"name"`
 	Queries  []string `json:"queries"`
-	Projects []string `json:"projects"` // project ids on the website, e.g. "event-crm"
+	Projects []string `json:"projects"`        // project ids on the website, e.g. "event-crm"
+	Angle    string   `json:"angle,omitempty"` // how to approach these posts, for the drafter
+	Links    []Link   `json:"links,omitempty"` // links to prefer for this topic, e.g. a live product
+}
+
+// Link is a URL a comment may end with, and a line on what it is.
+type Link struct {
+	URL   string `json:"url"`
+	About string `json:"about"`
 }
 
 const searchSlug = "SCRAPECREATORS_SEARCH_LINKEDIN_POSTS"

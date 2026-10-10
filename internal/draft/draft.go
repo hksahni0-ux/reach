@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hksahni0-ux/reach/internal/discover"
 	"github.com/hksahni0-ux/reach/internal/llm"
 	"github.com/hksahni0-ux/reach/internal/rank"
 	"github.com/hksahni0-ux/reach/internal/rules"
@@ -70,6 +71,7 @@ type Draft struct {
 	Model      string            `json:"model"`
 	Attempts   int               `json:"attempts"`
 	Violations []rules.Violation `json:"violations,omitempty"` // non-empty means it failed every try
+	Skipped    bool              `json:"skipped,omitempty"`    // the model judged the post wrong to comment on
 }
 
 const system = `You write %s comments for Prateek Sahni, a UK-based engineer who builds AI agents, CRMs and sales automation and has a background in additive manufacturing.
@@ -83,14 +85,16 @@ Write ONE comment replying to the post. Rules:
 - Sound warm and generous. Open with genuine, specific appreciation of ONE concrete point in the post (e.g. "Loved the point about buying a tool per play."), never generic praise on its own ("Great post", "Lovely", "Perfect"). Warmth tied to a detail shows you read it, and makes the author likely to reply.
 - Then take a clear stance and back it with something specific: a concrete lesson, number or trade-off from Prateek's work below.
 - Lead into the link with a reason to click that promises something useful, e.g. "here's how we built it:", "how we set it up:", "what we learned:".
-- End with exactly ONE link from the LINKS list, chosen in this order: the project page that best backs your point; otherwise one of Prateek's own LinkedIn posts on the same subject; otherwise the website homepage. Copy it exactly. The sentence before it should make the link feel useful, not salesy (no "check out", no "DM me").
+- End with exactly ONE link from the LINKS list, chosen in this order: a link marked PREFERRED, if there is one; otherwise the project page that best backs your point; otherwise one of Prateek's own LinkedIn posts on the same subject; otherwise the website homepage. Copy it exactly. The sentence before it should make the link feel useful, not salesy (no "check out", no "DM me").
 - Write complete, natural sentences, as you'd say them to a colleague. Not telegraphic notes, no project names used as jargon.
 - Only claim experience the facts support. Never invent numbers, percentages, clients or results: any number you use must appear in the facts below.
 - Plain British English, first person, sounds like a person typing. No hashtags, no em dashes, at most one emoji (prefer none).
 - Never start with praise ("Great post", "Love this", "Spot on", ...). No buzzwords (leverage, unlock, game-changer, seamless, delve, elevate).
 - Don't repeat what the existing comments already say.
 
-Reply with the comment text only, nothing else.`
+First decide whether to comment at all. Reply with just the word SKIP if the post isn't genuinely about the topic it was found under (a keyword match on something unrelated), or it is political, about a tragedy or someone's death, or a commercial ad, or a comment with a link would be out of place there.
+
+Otherwise reply with the comment text only, nothing else.`
 
 // OwnPost is one of Prateek's LinkedIn posts a comment may link to.
 type OwnPost struct {
@@ -105,6 +109,8 @@ type Options struct {
 	MaxChars int
 	Tries    int
 	OwnPosts []OwnPost
+	Angle    string          // the topic's own guidance on how to approach these posts
+	Links    []discover.Link // the topic's preferred links, e.g. a live product
 }
 
 func systemPrompt(o Options) string {
@@ -112,6 +118,9 @@ func systemPrompt(o Options) string {
 	if o.Platform == "youtube" {
 		name = "YouTube"
 		extra = "\n\nThis is a comment under a YouTube video; the text given is the video's title and description. Speak to the video's point, as a viewer who watched it, and keep it conversational."
+	}
+	if o.Angle != "" {
+		extra += "\n\nFOR THIS KIND OF POST: " + o.Angle
 	}
 	return fmt.Sprintf(system, name, o.MaxChars, o.MaxChars-linkBudget) + extra
 }
@@ -126,6 +135,9 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, o 
 	allowed := []string{site}
 	for _, op := range o.OwnPosts {
 		allowed = append(allowed, ShortPostURL(op.URL))
+	}
+	for _, l := range o.Links {
+		allowed = append(allowed, l.URL)
 	}
 	policy := rules.Policy{MaxChars: o.MaxChars, AllowedLinks: allowed, RequireLink: true}
 	facts := userPrompt(p, projects, o)
@@ -142,6 +154,10 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, o 
 			return d
 		}
 		d.Comment, d.Model = clean(answer), model
+		if strings.EqualFold(strings.Trim(d.Comment, ". "), "SKIP") {
+			d.Comment, d.Skipped = "", true
+			return d
+		}
 		d.Violations = append(rules.Check(d.Comment, policy, p.TopComments), unsupportedNumbers(d.Comment, facts)...)
 		if len(d.Violations) == 0 {
 			return d
@@ -186,6 +202,9 @@ func userPrompt(p rank.Scored, projects []Project, o Options) string {
 		fmt.Fprintf(&b, "- %s: %s %s Outcome: %s\n", pr.Title, pr.OneLiner, pr.Metric, pr.Outcome)
 	}
 	b.WriteString("\nLINKS (end with exactly one):\n")
+	for _, l := range o.Links {
+		fmt.Fprintf(&b, "- PREFERRED, %s: %s\n", l.About, l.URL)
+	}
 	for _, pr := range projects {
 		fmt.Fprintf(&b, "- project page, %s: %s\n", pr.Title, ProjectURL(o.Site, pr.ID))
 	}
