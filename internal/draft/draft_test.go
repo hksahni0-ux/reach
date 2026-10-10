@@ -123,3 +123,15 @@ func TestWriteSkipsWhenTheModelSaysSo(t *testing.T) {
 		t.Fatalf("want a skipped draft after one attempt, got %+v", d)
 	}
 }
+
+func TestWriteNeverKeepsAModelsWorking(t *testing.T) {
+	working := "The comment is 226 characters, need to get under 200.\nCount:\n1\n2\n3\n" + strings.Repeat("x", 500)
+	c := &scripted{answers: []string{working, working}}
+	d := Write(context.Background(), c, post(), nil, opts(2))
+	if d.Comment != "" || len(d.Violations) == 0 {
+		t.Fatalf("want an empty, flagged draft, got %+v", d)
+	}
+	if len(c.calls[1]) != 3 || !strings.Contains(c.calls[1][2].Content, "ONLY the final comment") {
+		t.Fatalf("the retry should restart from the prompt with a plain instruction, got %d messages", len(c.calls[1]))
+	}
+}

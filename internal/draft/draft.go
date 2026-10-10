@@ -166,11 +166,26 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, o 
 		for _, v := range d.Violations {
 			why = append(why, "- "+v.String())
 		}
+		if rambling(d.Comment, o.MaxChars) {
+			// The model showed its working (counting characters, drafts) instead of answering.
+			// Don't feed that back; ask again from the original prompt.
+			msgs = msgs[:2]
+			msgs = append(msgs, llm.Message{Role: "user", Content: "Reply with ONLY the final comment text, one or two sentences ending with the link. No working, no counting, no notes."})
+			continue
+		}
 		msgs = append(msgs,
 			llm.Message{Role: "assistant", Content: d.Comment},
 			llm.Message{Role: "user", Content: "That breaks these rules:\n" + strings.Join(why, "\n") + "\nRewrite it. Reply with the comment text only."})
 	}
+	if rambling(d.Comment, o.MaxChars) {
+		d.Comment = "" // never put a model's working into the Sheet
+	}
 	return d
+}
+
+// rambling reports an answer that is plainly not a comment: far over the limit, or many lines.
+func rambling(answer string, maxChars int) bool {
+	return len([]rune(answer)) > 2*maxChars || strings.Count(answer, "\n") > 3
 }
 
 var activityID = regexp.MustCompile(`activity[-:](\d{18,20})`)

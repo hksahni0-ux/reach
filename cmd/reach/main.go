@@ -156,6 +156,7 @@ func runCycle(args []string) error {
 	drafts := fs.Int("drafts", 5, "comments to draft per platform")
 	tries := fs.Int("tries", 3, "attempts per draft to pass the comment rules")
 	dry := fs.Bool("dry", false, "print the drafts instead of adding them to the Sheet")
+	perTopicFlag := fs.Int("per-topic", 0, "drafts per topic, overriding the Settings tab (0 = use the tab)")
 	fs.Parse(args)
 
 	cfg, err := loadConfig(*cfgPath)
@@ -206,6 +207,9 @@ func runCycle(args []string) error {
 		return out
 	}
 	perTopic := func(topic string) int {
+		if *perTopicFlag > 0 {
+			return *perTopicFlag
+		}
 		if ts := settings.Topics[topic]; ts.Drafts > 0 {
 			return ts.Drafts
 		}
@@ -257,7 +261,7 @@ func runCycle(args []string) error {
 		fmt.Fprintf(os.Stderr, "%s: %d found, %d new past %d+ views, %d+ likes, %d+ comments\n",
 			name, len(found), len(hot), pl.MinViews, pl.MinLikes, pl.MinComments)
 		best := rank.Rank(hot, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
-		if haveSettings {
+		if haveSettings || *perTopicFlag > 0 {
 			best = capPerTopic(best, perTopic)
 		} else if len(best) > *drafts {
 			best = best[:*drafts]
