@@ -272,3 +272,17 @@ func ExaCounts(ctx context.Context, ex composio.Executor, posts []Post) ([]Post,
 	}
 	return posts, errs
 }
+
+// LinkedInPost reads one post by link through Exa, for a post Prateek asked for by hand.
+func LinkedInPost(ctx context.Context, ex composio.Executor, link, topic string) (Post, error) {
+	p := Post{Platform: "linkedin", URL: canonicalLinkedInURL(link), Topic: topic}
+	p.Published, _ = PostedAt(link)
+	got, errs := ExaCounts(ctx, ex, []Post{p})
+	if len(errs) > 0 {
+		return p, errs[0]
+	}
+	if got[0].Text == "" {
+		return p, fmt.Errorf("couldn't read %s", link)
+	}
+	return got[0], nil
+}

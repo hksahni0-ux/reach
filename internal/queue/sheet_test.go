@@ -46,3 +46,27 @@ func TestApprovedIn(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestSettingsIn(t *testing.T) {
+	raw := json.RawMessage(`{"valueRanges":[{"values":[
+		["CRM","TRUE","3","LinkedIn","","https://www.linkedin.com/posts/a-activity-1"],
+		["Job seekers","TRUE","","YouTube"],
+		["AI agents","FALSE","5","LinkedIn + YouTube","","not a link"],
+		["","","","","","https://www.youtube.com/watch?v=abc"]]}]}`)
+	st, err := settingsIn(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := st.Topics["CRM"]; !c.Include || c.Drafts != 3 || !c.LinkedIn || c.YouTube {
+		t.Fatalf("CRM = %+v", c)
+	}
+	if j := st.Topics["Job seekers"]; !j.Include || j.Drafts != 0 || j.LinkedIn || !j.YouTube {
+		t.Fatalf("Job seekers = %+v", j)
+	}
+	if a := st.Topics["AI agents"]; a.Include {
+		t.Fatalf("AI agents should be off: %+v", a)
+	}
+	if len(st.Posts) != 2 || st.Posts[1] != "https://www.youtube.com/watch?v=abc" {
+		t.Fatalf("posts = %v", st.Posts)
+	}
+}

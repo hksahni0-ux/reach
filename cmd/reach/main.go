@@ -184,8 +184,41 @@ func runCycle(args []string) error {
 	}
 	since := time.Now().Add(-time.Duration(*hours) * time.Hour)
 
+	// The Settings tab, if there is one, picks the topics, platforms and drafts per topic.
+	var settings queue.Settings
+	haveSettings := false
+	if sheetID != "" {
+		if settings, haveSettings, err = sheet.ReadSettings(ctx); err != nil {
+			return fmt.Errorf("reading the Settings tab: %w", err)
+		}
+	}
+	topicsFor := func(platform string) []discover.Topic {
+		if !haveSettings {
+			return cfg.Topics
+		}
+		var out []discover.Topic
+		for _, t := range cfg.Topics {
+			ts, listed := settings.Topics[t.Name]
+			if !listed || (ts.Include && (platform == "linkedin" && ts.LinkedIn || platform == "youtube" && ts.YouTube)) {
+				out = append(out, t)
+			}
+		}
+		return out
+	}
+	perTopic := func(topic string) int {
+		if ts := settings.Topics[topic]; ts.Drafts > 0 {
+			return ts.Drafts
+		}
+		return 1
+	}
+
 	var ranked []rank.Scored
 	for _, name := range strings.Split(*platforms, ",") {
+		topics := topicsFor(strings.TrimSpace(name))
+		if len(topics) == 0 {
+			fmt.Fprintf(os.Stderr, "%s: no topics selected in Settings\n", name)
+			continue
+		}
 		var (
 			found []discover.Post
 			errs  []error
@@ -195,10 +228,10 @@ func runCycle(args []string) error {
 		case "linkedin":
 			pl = cfg.LinkedIn
 			if *source == "scrapecreators" {
-				found, errs = discover.LinkedIn(ctx, cx, firstQueries(cfg.Topics, cfg.QueriesPerTopic), "last-day")
+				found, errs = discover.LinkedIn(ctx, cx, firstQueries(topics, cfg.QueriesPerTopic), "last-day")
 			} else {
 				var stubs []discover.Post
-				stubs, errs = discover.ExaLinkedIn(ctx, cx, cfg.Topics, since, max(pl.PerQuery, 10))
+				stubs, errs = discover.ExaLinkedIn(ctx, cx, topics, since, max(pl.PerQuery, 10))
 				warn(errs)
 				found, errs = discover.ExaCounts(ctx, cx, notQueued(stubs, queued))
 			}
@@ -209,7 +242,7 @@ func runCycle(args []string) error {
 				fmt.Fprintln(os.Stderr, "youtube: skipped, YOUTUBE_API_KEY is not set")
 				continue
 			}
-			found, errs = discover.NewYouTube(key).Videos(ctx, cfg.Topics, since, max(pl.PerQuery, 5))
+			found, errs = discover.NewYouTube(key).Videos(ctx, topics, since, max(pl.PerQuery, 5))
 		default:
 			return fmt.Errorf("unknown platform %q", name)
 		}
@@ -224,7 +257,9 @@ func runCycle(args []string) error {
 		fmt.Fprintf(os.Stderr, "%s: %d found, %d new past %d+ views, %d+ likes, %d+ comments\n",
 			name, len(found), len(hot), pl.MinViews, pl.MinLikes, pl.MinComments)
 		best := rank.Rank(hot, rank.Options{ExcludeURLs: cfg.ExcludeAuthors, MaxAge: time.Duration(*hours) * time.Hour})
-		if len(best) > *drafts {
+		if haveSettings {
+			best = capPerTopic(best, perTopic)
+		} else if len(best) > *drafts {
 			best = best[:*drafts]
 		}
 		if name == "youtube" {
@@ -234,6 +269,34 @@ func runCycle(args []string) error {
 			}
 		}
 		ranked = append(ranked, best...)
+	}
+	// Posts asked for by link in the Settings tab are drafted whatever their numbers or age.
+	for _, link := range settings.Posts {
+		var (
+			p   discover.Post
+			err error
+		)
+		switch {
+		case strings.Contains(link, "linkedin.com/"):
+			p, err = discover.LinkedInPost(ctx, cx, link, "Requested")
+		case strings.Contains(link, "youtube.com/") || strings.Contains(link, "youtu.be/"):
+			key := os.Getenv("YOUTUBE_API_KEY")
+			if key == "" {
+				err = fmt.Errorf("YOUTUBE_API_KEY is not set")
+				break
+			}
+			p, err = discover.NewYouTube(key).Video(ctx, link, "Requested")
+		default:
+			err = fmt.Errorf("only LinkedIn and YouTube links are supported")
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "requested %s: %v\n", link, err)
+			continue
+		}
+		if queued[p.URL] {
+			continue // already drafted on an earlier run
+		}
+		ranked = append(ranked, rank.Scored{Post: p, AgeHours: time.Since(p.Published).Hours()})
 	}
 	if len(ranked) == 0 {
 		fmt.Fprintln(os.Stderr, "nothing viral enough this run; lower the thresholds in the config to cast wider")
@@ -329,6 +392,19 @@ func runAssist() error {
 		}
 	}
 	return nil
+}
+
+// capPerTopic keeps, in ranked order, at most limit(topic) posts per topic.
+func capPerTopic(ranked []rank.Scored, limit func(topic string) int) []rank.Scored {
+	n := map[string]int{}
+	var out []rank.Scored
+	for _, p := range ranked {
+		if n[p.Topic] < limit(p.Topic) {
+			n[p.Topic]++
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // firstQueries keeps each topic's first n search phrases (all of them if n is 0).

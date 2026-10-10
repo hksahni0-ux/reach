@@ -80,3 +80,16 @@ func TestParseVideosKeepsEnglishOnly(t *testing.T) {
 		t.Fatalf("kept %v, want only the English videos en1,en2", got)
 	}
 }
+
+func TestVideoID(t *testing.T) {
+	for link, want := range map[string]string{
+		"https://www.youtube.com/watch?v=abc123&t=4s": "abc123",
+		"https://youtu.be/abc123":                     "abc123",
+		"https://www.youtube.com/shorts/abc123":       "abc123",
+		"https://www.youtube.com/channel/UC1":         "",
+	} {
+		if got := VideoID(link); got != want {
+			t.Errorf("VideoID(%s) = %q, want %q", link, got, want)
+		}
+	}
+}

@@ -60,6 +60,21 @@ the approval Sheet, starts it each weekday around 08:15 UK time (at most once a 
 now** menu; GitHub's own schedule trigger never fired for this repo, so it isn't used. Setup steps are at the top of
 the file.
 
+## Steering a run from the Sheet
+
+The **Settings** tab in the approval Sheet controls each run, with no code changes:
+
+| Column | What it does |
+|---|---|
+| Include | tick a topic to search it this run |
+| Drafts per run | how many comments to draft for that topic, per platform (blank means 1) |
+| Platforms | LinkedIn + YouTube, LinkedIn only, or YouTube only |
+| Draft a comment for these posts | paste any LinkedIn post or YouTube video link; the next run drafts a comment for it whatever its numbers or age |
+
+Topics not listed in the tab use the config's defaults; without the tab, a run drafts the best 5 per platform.
+Each topic can also carry its own `angle` (how to approach those posts) and preferred `links` in
+[`config/topics.json`](config/topics.json). The model skips posts that are off-topic, political, about a tragedy, or ads.
+
 ## Use
 
 Keys live in `.env` (git-ignored): `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID`, `NVIDIA_API_KEY`, `SHEET_ID`.

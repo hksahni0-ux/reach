@@ -235,3 +235,35 @@ func English(audioLang, lang, title, description string) bool {
 	}
 	return hits >= 2 || (hits == 1 && len(words) <= 8)
 }
+
+// VideoID pulls the ID out of any common YouTube link (watch, youtu.be, shorts).
+func VideoID(link string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	switch {
+	case strings.HasSuffix(u.Host, "youtu.be"):
+		return strings.Trim(u.Path, "/")
+	case strings.HasPrefix(u.Path, "/shorts/"):
+		return strings.Trim(strings.TrimPrefix(u.Path, "/shorts/"), "/")
+	default:
+		return u.Query().Get("v")
+	}
+}
+
+// Video looks up one video by link, for a post Prateek asked for by hand.
+func (y *YouTube) Video(ctx context.Context, link, topic string) (Post, error) {
+	id := VideoID(link)
+	if id == "" {
+		return Post{}, fmt.Errorf("no video ID in %s", link)
+	}
+	posts, err := y.details(ctx, []string{id}, topic)
+	if err != nil {
+		return Post{}, err
+	}
+	if len(posts) == 0 {
+		return Post{}, fmt.Errorf("video %s not found", id)
+	}
+	return y.TopComments(ctx, posts[0], 5), nil
+}
