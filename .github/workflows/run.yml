@@ -2,7 +2,8 @@
 # Apps Script in appscript/Code.gs (GitHub's own schedule trigger never fired for this repo),
 # from the Sheet's Reach menu, or by hand. Posting is done by hand with `reach assist`
 # (LinkedIn's comment API is partner-only). Needs repository secrets:
-# COMPOSIO_API_KEY, COMPOSIO_USER_ID, NVIDIA_API_KEY, SHEET_ID, YOUTUBE_API_KEY.
+# COMPOSIO_API_KEY, COMPOSIO_USER_ID, NVIDIA_API_KEY, SHEET_ID, YOUTUBE_API_KEY, and for
+# posting approved YouTube comments: YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN.
 name: run
 on:
   workflow_dispatch:
@@ -21,9 +22,15 @@ jobs:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       SHEET_ID: ${{ secrets.SHEET_ID }}
       YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Post the YouTube comments approved since the last run; a failure here mustn't stop the search.
+      - run: go run ./cmd/reach post
+        continue-on-error: true
       - run: go run ./cmd/reach run -drafts 5

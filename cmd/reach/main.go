@@ -2,6 +2,8 @@
 // and helps post the approved ones. See README.md.
 //
 //	reach run      [-platforms linkedin,youtube] [-drafts 5] [-dry]   find, rank, draft, queue in the Sheet
+//	reach post     [-max 10] [-dry]                                  post approved YouTube comments as Prateek
+//	reach youtube-login [-port 8765]                                 one-time Google sign-in for posting
 //	reach assist                                                    copy each approved comment and open its post
 //	reach discover [-window last-day] [-top 15] [-out ranked.json] [-from file.json…]
 package main
@@ -9,9 +11,13 @@ package main
 import (
 	"bufio"
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -23,6 +29,7 @@ import (
 	"github.com/hksahni0-ux/reach/internal/discover"
 	"github.com/hksahni0-ux/reach/internal/draft"
 	"github.com/hksahni0-ux/reach/internal/llm"
+	"github.com/hksahni0-ux/reach/internal/post"
 	"github.com/hksahni0-ux/reach/internal/queue"
 	"github.com/hksahni0-ux/reach/internal/rank"
 )
@@ -59,6 +66,10 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = runCycle(os.Args[2:])
+	case "post":
+		err = runPost(os.Args[2:])
+	case "youtube-login":
+		err = runYouTubeLogin(os.Args[2:])
 	case "assist":
 		err = runAssist()
 	case "discover":
@@ -74,6 +85,8 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: reach run [-config config/topics.json] [-platforms linkedin,youtube] [-source exa|scrapecreators] [-drafts 5] [-dry]")
+	fmt.Fprintln(os.Stderr, "       reach post [-max 10] [-dry]")
+	fmt.Fprintln(os.Stderr, "       reach youtube-login [-port 8765]")
 	fmt.Fprintln(os.Stderr, "       reach assist")
 	fmt.Fprintln(os.Stderr, "       reach discover [-config config/topics.json] [-window last-day] [-top 15] [-out file.json] [-from saved-search.json …]")
 	os.Exit(2)
@@ -388,6 +401,152 @@ func runCycle(args []string) (err error) {
 	return nil
 }
 
+// runPost posts the approved YouTube comments as Prateek through YouTube's official API, a
+// few per run, and marks each row. LinkedIn rows are left for `reach assist` (LinkedIn's
+// comment API is partner-only). Each row is marked "posting" first, so a crash can't
+// post twice; then "posted" with the time, or "failed: why".
+func runPost(args []string) error {
+	fs := flag.NewFlagSet("post", flag.ExitOnError)
+	maxN := fs.Int("max", 10, "most comments to post this run")
+	dry := fs.Bool("dry", false, "list what would be posted without posting")
+	fs.Parse(args)
+
+	env, err := need("COMPOSIO_API_KEY", "COMPOSIO_USER_ID", "SHEET_ID")
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	sheet := queue.Sheet{Ex: composio.New(env["COMPOSIO_API_KEY"], env["COMPOSIO_USER_ID"]), ID: env["SHEET_ID"]}
+	approved, err := sheet.Approved(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the Sheet: %w", err)
+	}
+	var todo []queue.Approved
+	for _, a := range approved {
+		if a.Platform == "youtube" && len(todo) < *maxN {
+			todo = append(todo, a)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%d approved YouTube comments to post\n", len(todo))
+	if *dry || len(todo) == 0 {
+		for _, a := range todo {
+			fmt.Printf("row %d: %s\n  %s\n", a.Row, a.URL, a.Comment)
+		}
+		return nil
+	}
+	yt, err := need("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN")
+	if err != nil {
+		return fmt.Errorf("%w (run `reach youtube-login` once)", err)
+	}
+	client := post.NewYouTube(yt["YOUTUBE_CLIENT_ID"], yt["YOUTUBE_CLIENT_SECRET"], yt["YOUTUBE_REFRESH_TOKEN"])
+
+	failed := 0
+	for _, a := range todo {
+		id := discover.VideoID(a.URL)
+		if id == "" {
+			failed++
+			sheet.Mark(ctx, a.Row, "failed: no video ID in the link", time.Time{})
+			continue
+		}
+		if err := sheet.Mark(ctx, a.Row, "posting", time.Time{}); err != nil {
+			return fmt.Errorf("row %d: marking as posting: %w", a.Row, err) // don't post what we can't record
+		}
+		cid, err := client.Comment(ctx, id, a.Comment)
+		if err != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "row %d: %v\n", a.Row, err)
+			if mErr := sheet.Mark(ctx, a.Row, "failed: "+oneLine(err.Error(), 200), time.Time{}); mErr != nil {
+				fmt.Fprintf(os.Stderr, "row %d: also couldn't record the failure: %v\n", a.Row, mErr)
+			}
+			continue
+		}
+		fmt.Printf("row %d: posted comment %s on %s\n", a.Row, cid, a.URL)
+		if err := sheet.Mark(ctx, a.Row, "posted", time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "row %d: posted, but couldn't mark it (it stays \"posting\", so it won't repeat): %v\n", a.Row, err)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d YouTube comments failed; see the Sheet", failed, len(todo))
+	}
+	return nil
+}
+
+// runYouTubeLogin signs Prateek in to Google once, with his own Cloud OAuth client, and saves
+// the long-lived refresh token to .env for `reach post`. Google sends the browser back to a
+// one-off local page, so nothing needs to be copied by hand.
+//
+// A Desktop OAuth client accepts any local port. A Web client only accepts redirect URIs
+// registered on it, so register http://127.0.0.1:<port>/ and pass the same -port.
+func runYouTubeLogin(args []string) error {
+	fs := flag.NewFlagSet("youtube-login", flag.ExitOnError)
+	port := fs.Int("port", 0, "fixed local port, for a Web OAuth client with http://127.0.0.1:<port>/ registered (0 = any, for a Desktop client)")
+	fs.Parse(args)
+	env, err := need("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET")
+	if err != nil {
+		return fmt.Errorf("%w (create a Desktop OAuth client in Google Cloud first)", err)
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", *port))
+	if err != nil {
+		return err
+	}
+	redirect := fmt.Sprintf("http://127.0.0.1:%d/", ln.Addr().(*net.TCPAddr).Port)
+	stateBytes := make([]byte, 16)
+	crand.Read(stateBytes)
+	state := hex.EncodeToString(stateBytes)
+
+	codes := make(chan string, 1)
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("state") != state || q.Get("code") == "" {
+			http.Error(w, "Sign-in didn't complete: "+q.Get("error"), http.StatusBadRequest)
+			return
+		}
+		fmt.Fprintln(w, "Signed in. You can close this tab and go back to the terminal.")
+		codes <- q.Get("code")
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	u := post.AuthURL(env["YOUTUBE_CLIENT_ID"], redirect, state)
+	fmt.Println("Opening Google sign-in. If the browser doesn't open, visit:\n" + u)
+	exec.Command("open", u).Run()
+
+	var code string
+	select {
+	case code = <-codes:
+	case <-time.After(5 * time.Minute):
+		return fmt.Errorf("no sign-in within 5 minutes")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	token, err := post.Exchange(ctx, env["YOUTUBE_CLIENT_ID"], env["YOUTUBE_CLIENT_SECRET"], code, redirect)
+	if err != nil {
+		return err
+	}
+	if err := setDotEnv(".env", "YOUTUBE_REFRESH_TOKEN", token); err != nil {
+		return fmt.Errorf("saving to .env: %w", err)
+	}
+	fmt.Println("Saved YOUTUBE_REFRESH_TOKEN to .env. Add it as a GitHub secret too, for the daily run.")
+	return nil
+}
+
+// setDotEnv sets KEY=value in a .env file, replacing the line if it's there.
+func setDotEnv(path, key, value string) error {
+	b, _ := os.ReadFile(path)
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	found := false
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), key+"=") {
+			lines[i], found = key+"="+value, true
+		}
+	}
+	if !found {
+		lines = append(lines, key+"="+value)
+	}
+	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
 // runAssist is the hands-on way to post when the API can't: for each approved comment it puts
 // the text on the clipboard and opens the post, Prateek pastes and clicks Post, then presses
 // Enter here and the row is marked posted. macOS only (pbcopy, open).
@@ -401,6 +560,16 @@ func runAssist() error {
 	approved, err := sheet.Approved(ctx)
 	if err != nil {
 		return fmt.Errorf("reading the Sheet: %w", err)
+	}
+	if os.Getenv("YOUTUBE_REFRESH_TOKEN") != "" {
+		// YouTube comments are posted automatically by `reach post`; only the rest need hands.
+		var manual []queue.Approved
+		for _, a := range approved {
+			if a.Platform != "youtube" {
+				manual = append(manual, a)
+			}
+		}
+		approved = manual
 	}
 	if len(approved) == 0 {
 		fmt.Println("Nothing approved in the Sheet.")
