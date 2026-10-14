@@ -41,6 +41,7 @@ type config struct {
 	LinkedIn        platform         `json:"linkedin"`
 	YouTube         platform         `json:"youtube"`
 	QueriesPerTopic int              `json:"queries_per_topic"` // for -source scrapecreators: 1 credit per phrase
+	AutoPostYouTube bool             `json:"auto_post_youtube"` // post YouTube drafts that pass every check in the same run, no approval
 	OwnPosts        []draft.OwnPost  `json:"own_posts"`         // Prateek's posts a comment may link to
 	Topics          []discover.Topic `json:"topics"`
 }
@@ -169,6 +170,7 @@ func runCycle(args []string) (err error) {
 	drafts := fs.Int("drafts", 5, "comments to draft per platform")
 	tries := fs.Int("tries", 3, "attempts per draft to pass the comment rules")
 	dry := fs.Bool("dry", false, "print the drafts instead of adding them to the Sheet")
+	noPost := fs.Bool("no-post", false, "don't auto-post YouTube drafts this run, whatever the config says")
 	perTopicFlag := fs.Int("per-topic", 0, "drafts per topic, overriding the Settings tab (0 = use the tab)")
 	fs.Parse(args)
 
@@ -360,6 +362,18 @@ func runCycle(args []string) (err error) {
 		byName[t.Name] = t
 	}
 
+	// YouTube comments may be posted in the same run (auto_post_youtube), but only drafts that
+	// passed every check; anything flagged still goes to the Sheet for a human.
+	var yt *post.YouTube
+	if cfg.AutoPostYouTube && !*noPost && !*dry {
+		if creds, err := need("YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN"); err == nil {
+			yt = post.NewYouTube(creds["YOUTUBE_CLIENT_ID"], creds["YOUTUBE_CLIENT_SECRET"], creds["YOUTUBE_REFRESH_TOKEN"])
+		} else {
+			fmt.Fprintln(os.Stderr, "warning: auto_post_youtube is on but", err, "- YouTube drafts go to the Sheet instead")
+		}
+	}
+	var autoPosted, autoFailed int
+
 	var rows [][]any
 	for _, p := range ranked {
 		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]),
@@ -382,7 +396,22 @@ func runCycle(args []string) (err error) {
 			status = "needs edit: " + d.Violations[0].String()
 		}
 		fmt.Printf("\n%s\n  %s\n  [%d chars, %s, %s]\n", p.URL, d.Comment, len([]rune(d.Comment)), d.Model, status)
-		rows = append(rows, queue.Row(p, d, time.Now()))
+		row := queue.Row(p, d, time.Now())
+		if yt != nil && p.Platform == "youtube" && len(d.Violations) == 0 && d.Comment != "" {
+			if autoPosted > 0 {
+				time.Sleep(20 * time.Second) // a little space between comments
+			}
+			if cid, err := yt.Comment(ctx, discover.VideoID(p.URL), d.Comment); err != nil {
+				autoFailed++
+				fmt.Fprintf(os.Stderr, "  auto-post failed: %v\n", err)
+				row[1] = "failed: " + oneLine(err.Error(), 200)
+			} else {
+				autoPosted++
+				fmt.Printf("  posted on YouTube (comment %s)\n", cid)
+				row[1], row[15] = "posted", time.Now().UTC().Format("2006-01-02 15:04")
+			}
+		}
+		rows = append(rows, row)
 	}
 	if *dry {
 		return nil
@@ -392,6 +421,13 @@ func runCycle(args []string) (err error) {
 	}
 	fmt.Fprintf(os.Stderr, "\nadded %d drafts to the Sheet\n", len(rows))
 	summary = fmt.Sprintf("found %d posts, added %d drafts to Sheet1", totalFound, len(rows))
+	if autoPosted > 0 || autoFailed > 0 {
+		summary += fmt.Sprintf(" (%d posted on YouTube automatically", autoPosted)
+		if autoFailed > 0 {
+			summary += fmt.Sprintf(", %d failed", autoFailed)
+		}
+		summary += ")"
+	}
 	if skippedOff > 0 {
 		summary += fmt.Sprintf(", skipped %d as off-topic", skippedOff)
 	}

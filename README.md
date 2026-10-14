@@ -75,6 +75,12 @@ Topics not listed in the tab use the config's defaults; without the tab, a run d
 Each topic can also carry its own `angle` (how to approach those posts) and preferred `links` in
 [`config/topics.json`](config/topics.json). The model skips posts that are off-topic, political, about a tragedy, or ads.
 
+**YouTube posts itself.** With `"auto_post_youtube": true` in the config, a run posts each YouTube draft that
+passed every check (relevance, comment rules, numbers, one allowed link) straight away, through YouTube's official
+API with my own Google sign-in (`reach youtube-login`), 20 seconds apart, and logs it in the Sheet as "posted".
+Drafts that failed a check still go to the Sheet as "needs edit". `-no-post` turns it off for one run. LinkedIn
+stays approve-then-`reach assist`: its comment API is partner-only.
+
 ## Use
 
 Keys live in `.env` (git-ignored): `COMPOSIO_API_KEY`, `COMPOSIO_USER_ID`, `NVIDIA_API_KEY`, `SHEET_ID`.
