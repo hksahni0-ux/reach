@@ -79,6 +79,7 @@ func (y *YouTube) Videos(ctx context.Context, topics []Topic, since time.Time, p
 				}
 			}
 			found, err := y.details(ctx, ids, t.Name)
+			found = matching(found, q)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("query %q: %w", q, err))
 			}
@@ -266,4 +267,45 @@ func (y *YouTube) Video(ctx context.Context, link, topic string) (Post, error) {
 		return Post{}, fmt.Errorf("video %s not found", id)
 	}
 	return y.TopComments(ctx, posts[0], 5), nil
+}
+
+// stopWords are left out when checking that a video is really about its search phrase.
+var stopWords = map[string]bool{"a": true, "an": true, "the": true, "to": true, "of": true, "for": true, "in": true, "on": true, "and": true, "how": true, "get": true, "no": true, "after": true, "with": true}
+
+// matching keeps videos whose title or description contains every meaningful word of the
+// search phrase (by stem: "hunting" matches "hunt"), so "job hunting" doesn't
+// return "Broncos Are Getting the Job Done". YouTube's search is far looser than this.
+func matching(posts []Post, query string) []Post {
+	var words []string
+	for _, w := range strings.Fields(strings.ToLower(query)) {
+		w = strings.Trim(w, "#\"'.,!?")
+		if len(w) > 1 && !stopWords[w] {
+			words = append(words, w)
+		}
+	}
+	var out []Post
+	for _, p := range posts {
+		text := strings.ToLower(p.Text)
+		ok := true
+		for _, w := range words {
+			if !strings.Contains(text, stem(w)) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// stem drops a common English ending so "hunting", "hunter" and "hunts" all match "hunt".
+func stem(w string) string {
+	for _, suffix := range []string{"ing", "ers", "er", "ed", "es", "s"} {
+		if len(w) > len(suffix)+2 && strings.HasSuffix(w, suffix) {
+			return strings.TrimSuffix(w, suffix)
+		}
+	}
+	return w
 }

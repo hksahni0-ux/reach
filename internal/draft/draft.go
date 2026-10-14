@@ -92,7 +92,7 @@ Write ONE comment replying to the post. Rules:
 - Never start with praise ("Great post", "Love this", "Spot on", ...). No buzzwords (leverage, unlock, game-changer, seamless, delve, elevate).
 - Don't repeat what the existing comments already say.
 
-First decide whether to comment at all. Reply with just the word SKIP if the post isn't genuinely about the topic it was found under (a keyword match on something unrelated), or it is political, about a tragedy or someone's death, or a commercial ad, or a comment with a link would be out of place there.
+First decide whether to comment at all. Reply with just the word SKIP ONLY if: the post has nothing to do with the topic it was found under (e.g. a sports or beauty post that matched a keyword), or it is party-political, about a tragedy or someone's death, or a paid ad. Posts that discuss, debate or disagree about the topic are fine; when in doubt, write the comment.
 
 Otherwise reply with the comment text only, nothing else.`
 

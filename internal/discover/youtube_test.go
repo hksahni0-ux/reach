@@ -35,7 +35,7 @@ func TestVideosSearchesThenFetchesStats(t *testing.T) {
 			}
 			w.Write([]byte(`{"items":[{"id":{"videoId":"v1"}},{"id":{"videoId":"v1"}}]}`))
 		case "/videos":
-			w.Write([]byte(`{"items":[{"id":"v1","snippet":{"publishedAt":"2026-10-07T10:00:00Z","title":"T","defaultAudioLanguage":"en"},"statistics":{"viewCount":"9"}}]}`))
+			w.Write([]byte(`{"items":[{"id":"v1","snippet":{"publishedAt":"2026-10-07T10:00:00Z","title":"q1 and q2 explained","defaultAudioLanguage":"en"},"statistics":{"viewCount":"9"}}]}`))
 		}
 	}))
 	defer srv.Close()
@@ -91,5 +91,17 @@ func TestVideoID(t *testing.T) {
 		if got := VideoID(link); got != want {
 			t.Errorf("VideoID(%s) = %q, want %q", link, got, want)
 		}
+	}
+}
+
+func TestMatchingDropsKeywordAccidents(t *testing.T) {
+	posts := []Post{
+		{Text: "Broncos Are Getting the Job Done 💯"},
+		{Text: "Job hunting in 2026: what actually works"},
+		{Text: "My job hunt diary, week 3"},
+	}
+	got := matching(posts, "job hunting")
+	if len(got) != 2 || got[0].Text != posts[1].Text {
+		t.Fatalf("got %+v", got)
 	}
 }

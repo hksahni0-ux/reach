@@ -98,3 +98,17 @@ func settingsIn(raw json.RawMessage) (Settings, error) {
 	}
 	return st, nil
 }
+
+// statusCell is where a run reports what it's doing, so a click on "Find posts now" visibly
+// leads somewhere: "started…" when a run begins, then what it found or why it failed.
+const statusCell = "H1"
+
+// SetStatus writes one line of run status to the Settings tab. Errors are returned but
+// callers treat them as non-fatal: a missing status line mustn't stop a run.
+func (s Sheet) SetStatus(ctx context.Context, line string) error {
+	_, err := s.Ex.Execute(ctx, updateSlug, map[string]any{
+		"spreadsheet_id": s.ID, "sheet_name": SettingsTab, "first_cell_location": statusCell,
+		"valueInputOption": "RAW", "values": [][]any{{line}},
+	})
+	return err
+}

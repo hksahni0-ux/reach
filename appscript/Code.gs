@@ -69,7 +69,7 @@ function runReachIfDue() {
 // Menu item: start a run now, whatever the day.
 function runReachNow() {
   var code = dispatchGithubWorkflow_();
-  var msg = code === 204 ? 'Reach started. New drafts appear here in about 5 minutes.'
+  var msg = code === 204 ? 'Reach started. It takes 5 to 10 minutes; progress shows in the Settings tab (cell H1), and new drafts land in Sheet1.'
     : code === 0 ? 'GITHUB_PAT is not set (Extensions -> Apps Script -> Project Settings -> Script Properties).'
     : 'GitHub refused the run (HTTP ' + code + '). Check the token is scoped to reach with Actions: Read and write.';
   SpreadsheetApp.getActive().toast(msg, 'Reach', 8);

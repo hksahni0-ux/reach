@@ -147,7 +147,7 @@ func runDiscover(args []string) error {
 // (Exa can't see likes, so comments are the signal). YouTube: the Data API with Prateek's key,
 // sorted by views. -source scrapecreators uses ScrapeCreators for LinkedIn instead (likes and
 // comments, 1 credit per phrase).
-func runCycle(args []string) error {
+func runCycle(args []string) (err error) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("config", "config/topics.json", "topics and settings")
 	platforms := fs.String("platforms", "linkedin,youtube", "comma-separated: linkedin, youtube")
@@ -176,6 +176,27 @@ func runCycle(args []string) error {
 	defer cancel()
 	cx := composio.New(env["COMPOSIO_API_KEY"], env["COMPOSIO_USER_ID"])
 	sheet := queue.Sheet{Ex: cx, ID: sheetID}
+
+	// Report progress in the Settings tab, so a click on "Find posts now" visibly leads somewhere.
+	started := time.Now().UTC()
+	report := func(line string) {
+		if *dry || sheetID == "" {
+			return
+		}
+		if e := sheet.SetStatus(ctx, line); e != nil {
+			fmt.Fprintln(os.Stderr, "warning: couldn't update the status line:", e)
+		}
+	}
+	var summary string
+	var totalFound, skippedOff, modelFailed int
+	report(fmt.Sprintf("Running since %s UTC: finding posts… (takes about 5–10 minutes)", started.Format("Jan 2 15:04")))
+	defer func() {
+		if err != nil {
+			report(fmt.Sprintf("Last run %s UTC failed: %s", started.Format("Jan 2 15:04"), oneLine(err.Error(), 200)))
+		} else {
+			report(fmt.Sprintf("Last run %s UTC: %s", started.Format("Jan 2 15:04"), summary))
+		}
+	}()
 
 	queued := map[string]bool{}
 	if sheetID != "" {
@@ -251,6 +272,7 @@ func runCycle(args []string) error {
 			return fmt.Errorf("unknown platform %q", name)
 		}
 		warn(errs)
+		totalFound += len(found)
 
 		var hot []discover.Post
 		for _, p := range notQueued(found, queued) {
@@ -304,6 +326,7 @@ func runCycle(args []string) error {
 	}
 	if len(ranked) == 0 {
 		fmt.Fprintln(os.Stderr, "nothing viral enough this run; lower the thresholds in the config to cast wider")
+		summary = fmt.Sprintf("found %d posts, none new past the thresholds, so no new drafts", totalFound)
 		return nil
 	}
 	printTable(ranked)
@@ -331,12 +354,14 @@ func runCycle(args []string) error {
 				Angle: byName[p.Topic].Angle, Links: byName[p.Topic].Links})
 		if d.Skipped {
 			fmt.Fprintf(os.Stderr, "\n%s\n  skipped: not a good place for this comment (%s)\n", p.URL, oneLine(p.Text, 60))
+			skippedOff++
 			continue
 		}
 		if len(d.Violations) > 0 && d.Violations[0].Rule == "model" {
 			// Every model failed (overloaded, timed out): leave the post out of the Sheet so the
 			// next run can try it again, rather than queueing an empty draft.
 			fmt.Fprintf(os.Stderr, "\n%s\n  skipped, no model answered: %s\n", p.URL, oneLine(d.Violations[0].Detail, 160))
+			modelFailed++
 			continue
 		}
 		status := "ok"
@@ -353,6 +378,13 @@ func runCycle(args []string) error {
 		return fmt.Errorf("adding to the Sheet: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "\nadded %d drafts to the Sheet\n", len(rows))
+	summary = fmt.Sprintf("found %d posts, added %d drafts to Sheet1", totalFound, len(rows))
+	if skippedOff > 0 {
+		summary += fmt.Sprintf(", skipped %d as off-topic", skippedOff)
+	}
+	if modelFailed > 0 {
+		summary += fmt.Sprintf(", %d not drafted (AI busy, retried next run)", modelFailed)
+	}
 	return nil
 }
 

@@ -40,6 +40,7 @@ type Client struct {
 	URL      string
 	Models   []string
 	PerModel time.Duration // give up on a model after this long and try the next
+	BusyWait time.Duration // wait this long and retry once when a model says it's overloaded
 	HTTP     *http.Client
 }
 
@@ -47,7 +48,7 @@ func New(apiKey string, models []string) *Client {
 	if len(models) == 0 {
 		models = DefaultModels
 	}
-	return &Client{APIKey: apiKey, URL: defaultURL, Models: models, PerModel: 90 * time.Second, HTTP: &http.Client{}}
+	return &Client{APIKey: apiKey, URL: defaultURL, Models: models, PerModel: 90 * time.Second, BusyWait: 10 * time.Second, HTTP: &http.Client{}}
 }
 
 // Chat returns the first non-empty answer in the chain and the model that gave it.
@@ -55,6 +56,15 @@ func (c *Client) Chat(ctx context.Context, msgs []Message) (answer, model string
 	var errs []error
 	for _, m := range c.Models {
 		answer, err := c.one(ctx, m, msgs)
+		if busy(err) && ctx.Err() == nil {
+			// NVIDIA sheds load with 503/429 for a few seconds at a time; one short wait usually
+			// gets an answer from the better model instead of falling down the chain.
+			select {
+			case <-time.After(c.BusyWait):
+				answer, err = c.one(ctx, m, msgs)
+			case <-ctx.Done():
+			}
+		}
 		if err == nil && answer != "" {
 			return answer, m, nil
 		}
@@ -124,4 +134,9 @@ func StripReasoning(s string) string {
 		s = s[i+len("</think>"):]
 	}
 	return strings.TrimSpace(s)
+}
+
+// busy reports NVIDIA's "overloaded" and rate-limit answers.
+func busy(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "HTTP 503") || strings.Contains(err.Error(), "HTTP 429"))
 }
