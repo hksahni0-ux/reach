@@ -357,6 +357,9 @@ func runCycle(args []string) (err error) {
 		models = strings.Split(m, ",")
 	}
 	ai := llm.New(env["NVIDIA_API_KEY"], models)
+	// Reasoning is off by default: on 16 Oct 2026 it took 2-6 minutes a draft and often ran out
+	// of room with no answer, while off wrote passing drafts in 2-6 seconds. REACH_THINK=1 turns it on.
+	ai.Think = os.Getenv("REACH_THINK") == "1"
 	byTopic := map[string][]string{}
 	byName := map[string]discover.Topic{}
 	for _, t := range cfg.Topics {

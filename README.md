@@ -49,7 +49,9 @@ broken rules listed (up to three tries); one that still fails goes to the Sheet 
 3. **Rank** as above, and keep the best few (`-drafts 5`).
 4. **Draft.** Comments are written from the projects the website publishes at `/portfolio.json`, so they only cite
    real work, and end with one link. Models are tried in order on NVIDIA's API until one answers: Nemotron 3.5 Super,
-   Nemotron 3 Super, DeepSeek V4.1 Flash, Llama 3.2 90B (`REACH_MODELS` overrides).
+   Nemotron 3 Super, DeepSeek V4.1 Flash, Llama 3.2 90B (`REACH_MODELS` overrides). Reasoning is switched off
+   (`REACH_THINK=1` turns it on): with it, Nemotron took minutes a draft and often ran out of room before answering;
+   without it, a draft takes seconds. Up to 4 drafts are written at once, LinkedIn and YouTube taking turns.
 5. **Queue.** Drafts go to the Google Sheet as "pending" (or "needs edit" if they failed a rule).
 6. **Approve.** I read each draft, edit it if I want, and set Status to "approve" or "skip" from the dropdown.
 7. **Post.** `reach assist` copies each approved comment, opens its post, and marks the row "posted" once I've pasted

@@ -33,6 +33,10 @@ var genericOpeners = []string{
 	"absolutely agree", "insightful post", "great insights", "nice post", "amazing post", "brilliant post",
 }
 
+// A short praise-only first sentence ("Great prompt.", "Love it!") is as empty as the
+// openers above; a specific one ("Loved the point about ghosting...") runs longer.
+var shortPraise = regexp.MustCompile(`^(great|nice|amazing|brilliant|awesome|love|loved|lovely|perfect|excellent|fantastic|wonderful)\b[^.!?]{0,15}[.!?]`)
+
 // Words that make a comment read as machine-written or salesy.
 var hypeWords = []string{
 	"game-changer", "game changer", "revolutionary", "revolutionize", "delve", "unlock", "leverage",
@@ -60,6 +64,9 @@ func Check(comment string, p Policy, existing []string) []Violation {
 			v = append(v, Violation{"generic opener", fmt.Sprintf("starts with %q", o)})
 			break
 		}
+	}
+	if m := shortPraise.FindString(lower); m != "" && (len(v) == 0 || v[len(v)-1].Rule != "generic opener") {
+		v = append(v, Violation{"generic opener", fmt.Sprintf("starts with %q, praise that says nothing specific", c[:len(m)])})
 	}
 	for _, w := range hypeWords {
 		if strings.Contains(lower, w) {

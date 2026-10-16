@@ -44,6 +44,7 @@ type Client struct {
 	Models   []string
 	PerModel time.Duration // give up on a model after this long and try the next
 	BusyWait time.Duration // wait this long and retry once when a model says it's overloaded
+	Think    bool          // let Nemotron reason before answering (slower, and it can run out of room)
 	HTTP     *http.Client
 }
 
@@ -88,6 +89,8 @@ type chatRequest struct {
 	Temperature float64   `json:"temperature"`
 	TopP        float64   `json:"top_p"`
 	MaxTokens   int       `json:"max_tokens"`
+	// Nemotron's switch for its reasoning; other makers ignore it.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 type chatResponse struct {
@@ -101,9 +104,13 @@ type chatResponse struct {
 func (c *Client) one(ctx context.Context, model string, msgs []Message) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.PerModel)
 	defer cancel()
-	// Nemotron reasons before answering, often 2,000+ tokens for a 200-character comment;
-	// at a 2,000 cap it ran out mid-thought and answered nothing, so leave plenty of room.
-	body, _ := json.Marshal(chatRequest{Model: model, Messages: msgs, Temperature: 0.6, TopP: 0.9, MaxTokens: 8000})
+	// With reasoning on, Nemotron often spends 2,000+ tokens thinking about a 200-character
+	// comment; at a 2,000 cap it ran out mid-thought and answered nothing, so leave room.
+	cr := chatRequest{Model: model, Messages: msgs, Temperature: 0.6, TopP: 0.9, MaxTokens: 8000}
+	if !c.Think {
+		cr.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+	}
+	body, _ := json.Marshal(cr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
 	if err != nil {
 		return "", err

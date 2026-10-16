@@ -81,7 +81,7 @@ You ARE Prateek, writing in the first person. The post's author is someone else:
 The post is already popular, so the comment will be read by many people. Its job is to add a point worth reading and give readers a reason to click Prateek's link.
 
 Write ONE comment replying to the post. Rules:
-- At most %d characters in total, including the link. The link is about 50 characters, so keep the words under %d. One or two sentences.
+- At most %d characters in total, including the link. The link is about 50 characters, so keep the words under %d characters, about %d words. One or two sentences.
 - Sound warm and generous. Open with genuine, specific appreciation of ONE concrete point in the post (e.g. "Loved the point about buying a tool per play."), never generic praise on its own ("Great post", "Lovely", "Perfect"). Warmth tied to a detail shows you read it, and makes the author likely to reply.
 - Then take a clear stance and back it with something specific: a concrete lesson, number or trade-off from Prateek's work below.
 - Lead into the link with a reason to click that promises something useful, e.g. "here's how we built it:", "how we set it up:", "what we learned:".
@@ -122,11 +122,14 @@ func systemPrompt(o Options) string {
 	if o.Angle != "" {
 		extra += "\n\nFOR THIS KIND OF POST: " + o.Angle
 	}
-	return fmt.Sprintf(system, name, o.MaxChars, o.MaxChars-linkBudget) + extra
+	return fmt.Sprintf(system, name, o.MaxChars, o.MaxChars-linkBudget, (o.MaxChars-linkBudget)/charsPerWord) + extra
 }
 
 // linkBudget is the room a link takes, so the prompt can tell the model how many words fit.
 const linkBudget = 55
+
+// charsPerWord turns a character budget into words, which models keep to far better.
+const charsPerWord = 7
 
 // Write drafts a comment for p using the given projects, retrying up to o.Tries times.
 // Every comment must end with one link: a project page, one of Prateek's posts, or the site.
@@ -165,6 +168,11 @@ func Write(ctx context.Context, c Chatter, p rank.Scored, projects []Project, o 
 		var why []string
 		for _, v := range d.Violations {
 			why = append(why, "- "+v.String())
+			if v.Rule == "too long" {
+				// Without reasoning, models can't count characters; say how much to cut, in words too.
+				over := len([]rune(d.Comment)) - o.MaxChars
+				why = append(why, fmt.Sprintf("  Cut at least %d characters (about %d words): drop a clause, keep the link.", over, over/charsPerWord+1))
+			}
 		}
 		if rambling(d.Comment, o.MaxChars) {
 			// The model showed its working (counting characters, drafts) instead of answering.

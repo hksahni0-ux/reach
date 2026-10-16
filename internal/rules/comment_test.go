@@ -18,6 +18,8 @@ func TestCheck(t *testing.T) {
 		{"good with project link", "We hit this with Gmail flagging a re-saved CV as a virus. Wrote it up: https://prateeksahni.pages.dev/projects/outreach-agent/", nil, nil},
 		{"too long", strings.Repeat("word ", 40), nil, []string{"too long"}},
 		{"generic opener", "Great post! Agents need guardrails.", nil, []string{"generic opener"}},
+		{"short praise opener", "Great prompt. Agents need guardrails.", nil, []string{"generic opener"}},
+		{"specific praise is fine", "Loved the point about ghosting becoming the norm. Agents need guardrails.", nil, nil},
 		{"hype", "This is a game-changer for sales teams.", nil, []string{"hype or sales word"}},
 		{"hashtag", "Agents need audit logs #AI", nil, []string{"hashtag"}},
 		{"em dash", "Agents need audit logs — always.", nil, []string{"em dash"}},
