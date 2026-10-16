@@ -411,13 +411,18 @@ func runCycle(args []string) (err error) {
 				row[1], row[15] = "posted", time.Now().UTC().Format("2006-01-02 15:04")
 			}
 		}
+		if *dry {
+			continue
+		}
+		// Each draft goes in as soon as it's written, so a run that hits its time limit
+		// keeps what it finished.
+		if err := sheet.Append(ctx, [][]any{row}); err != nil {
+			return fmt.Errorf("adding to the Sheet: %w", err)
+		}
 		rows = append(rows, row)
 	}
 	if *dry {
 		return nil
-	}
-	if err := sheet.Append(ctx, rows); err != nil {
-		return fmt.Errorf("adding to the Sheet: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "\nadded %d drafts to the Sheet\n", len(rows))
 	summary = fmt.Sprintf("found %d posts, added %d drafts to Sheet1", totalFound, len(rows))
