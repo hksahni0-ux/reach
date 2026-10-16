@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -169,6 +170,7 @@ func runCycle(args []string) (err error) {
 	hours := fs.Int("hours", 24, "only posts from the last this many hours")
 	drafts := fs.Int("drafts", 5, "comments to draft per platform")
 	tries := fs.Int("tries", 3, "attempts per draft to pass the comment rules")
+	workers := fs.Int("workers", 4, "drafts written at the same time")
 	dry := fs.Bool("dry", false, "print the drafts instead of adding them to the Sheet")
 	noPost := fs.Bool("no-post", false, "don't auto-post YouTube drafts this run, whatever the config says")
 	perTopicFlag := fs.Int("per-topic", 0, "drafts per topic, overriding the Settings tab (0 = use the tab)")
@@ -374,52 +376,74 @@ func runCycle(args []string) (err error) {
 	}
 	var autoPosted, autoFailed int
 
-	var rows [][]any
-	for _, p := range ranked {
-		d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]),
-			draft.Options{Platform: p.Platform, Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts,
-				Angle: byName[p.Topic].Angle, Links: byName[p.Topic].Links})
-		if d.Skipped {
-			fmt.Fprintf(os.Stderr, "\n%s\n  skipped: not a good place for this comment (%s)\n", p.URL, oneLine(p.Text, 60))
-			skippedOff++
-			continue
-		}
-		if len(d.Violations) > 0 && d.Violations[0].Rule == "model" {
-			// Every model failed (overloaded, timed out): leave the post out of the Sheet so the
-			// next run can try it again, rather than queueing an empty draft.
-			fmt.Fprintf(os.Stderr, "\n%s\n  skipped, no model answered: %s\n", p.URL, oneLine(d.Violations[0].Detail, 160))
-			modelFailed++
-			continue
-		}
-		status := "ok"
-		if len(d.Violations) > 0 {
-			status = "needs edit: " + d.Violations[0].String()
-		}
-		fmt.Printf("\n%s\n  %s\n  [%d chars, %s, %s]\n", p.URL, d.Comment, len([]rune(d.Comment)), d.Model, status)
-		row := queue.Row(p, d, time.Now())
-		if yt != nil && p.Platform == "youtube" && len(d.Violations) == 0 && d.Comment != "" {
-			if autoPosted > 0 {
-				time.Sleep(20 * time.Second) // a little space between comments
+	// Drafts are written several at a time (each takes a few model calls of 15-55s of
+	// reasoning), and platforms take turns so YouTube isn't left until every LinkedIn post
+	// is done. Everything after the draft (printing, posting, the Sheet) happens one post
+	// at a time under mu, so YouTube comments still go out 20 seconds apart.
+	var (
+		rows     [][]any
+		mu       sync.Mutex
+		sheetErr error
+		wg       sync.WaitGroup
+		slots    = make(chan struct{}, max(1, *workers))
+	)
+	for _, p := range alternate(ranked) {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(p rank.Scored) {
+			defer func() { <-slots; wg.Done() }()
+			d := draft.Write(ctx, ai, p, draft.Relevant(projects, byTopic[p.Topic]),
+				draft.Options{Platform: p.Platform, Site: cfg.Site, MaxChars: cfg.MaxCommentChars, Tries: *tries, OwnPosts: cfg.OwnPosts,
+					Angle: byName[p.Topic].Angle, Links: byName[p.Topic].Links})
+			mu.Lock()
+			defer mu.Unlock()
+			if d.Skipped {
+				fmt.Fprintf(os.Stderr, "\n%s\n  skipped: not a good place for this comment (%s)\n", p.URL, oneLine(p.Text, 60))
+				skippedOff++
+				return
 			}
-			if cid, err := yt.Comment(ctx, discover.VideoID(p.URL), d.Comment); err != nil {
-				autoFailed++
-				fmt.Fprintf(os.Stderr, "  auto-post failed: %v\n", err)
-				row[1] = "failed: " + oneLine(err.Error(), 200)
-			} else {
-				autoPosted++
-				fmt.Printf("  posted on YouTube (comment %s)\n", cid)
-				row[1], row[15] = "posted", time.Now().UTC().Format("2006-01-02 15:04")
+			if len(d.Violations) > 0 && d.Violations[0].Rule == "model" {
+				// Every model failed (overloaded, timed out): leave the post out of the Sheet so the
+				// next run can try it again, rather than queueing an empty draft.
+				fmt.Fprintf(os.Stderr, "\n%s\n  skipped, no model answered: %s\n", p.URL, oneLine(d.Violations[0].Detail, 160))
+				modelFailed++
+				return
 			}
-		}
-		if *dry {
-			continue
-		}
-		// Each draft goes in as soon as it's written, so a run that hits its time limit
-		// keeps what it finished.
-		if err := sheet.Append(ctx, [][]any{row}); err != nil {
-			return fmt.Errorf("adding to the Sheet: %w", err)
-		}
-		rows = append(rows, row)
+			status := "ok"
+			if len(d.Violations) > 0 {
+				status = "needs edit: " + d.Violations[0].String()
+			}
+			fmt.Printf("\n%s\n  %s\n  [%d chars, %s, %s]\n", p.URL, d.Comment, len([]rune(d.Comment)), d.Model, status)
+			row := queue.Row(p, d, time.Now())
+			if yt != nil && p.Platform == "youtube" && len(d.Violations) == 0 && d.Comment != "" {
+				if autoPosted > 0 {
+					time.Sleep(20 * time.Second) // a little space between comments
+				}
+				if cid, err := yt.Comment(ctx, discover.VideoID(p.URL), d.Comment); err != nil {
+					autoFailed++
+					fmt.Fprintf(os.Stderr, "  auto-post failed: %v\n", err)
+					row[1] = "failed: " + oneLine(err.Error(), 200)
+				} else {
+					autoPosted++
+					fmt.Printf("  posted on YouTube (comment %s)\n", cid)
+					row[1], row[15] = "posted", time.Now().UTC().Format("2006-01-02 15:04")
+				}
+			}
+			if *dry || sheetErr != nil {
+				return
+			}
+			// Each draft goes in as soon as it's written, so a run that hits its time limit
+			// keeps what it finished.
+			if err := sheet.Append(ctx, [][]any{row}); err != nil {
+				sheetErr = err
+				return
+			}
+			rows = append(rows, row)
+		}(p)
+	}
+	wg.Wait()
+	if sheetErr != nil {
+		return fmt.Errorf("adding to the Sheet: %w", sheetErr)
 	}
 	if *dry {
 		return nil
@@ -745,4 +769,26 @@ func oneLine(s string, n int) string {
 		return string([]rune(s)[:n]) + "…"
 	}
 	return s
+}
+
+// alternate interleaves posts by platform (LinkedIn, YouTube, LinkedIn, ...), keeping each
+// platform's own ranking, so one platform's drafts don't all wait behind the other's.
+func alternate(posts []rank.Scored) []rank.Scored {
+	var order []string
+	by := map[string][]rank.Scored{}
+	for _, p := range posts {
+		if _, ok := by[p.Platform]; !ok {
+			order = append(order, p.Platform)
+		}
+		by[p.Platform] = append(by[p.Platform], p)
+	}
+	out := make([]rank.Scored, 0, len(posts))
+	for len(out) < len(posts) {
+		for _, name := range order {
+			if q := by[name]; len(q) > 0 {
+				out, by[name] = append(out, q[0]), q[1:]
+			}
+		}
+	}
+	return out
 }
