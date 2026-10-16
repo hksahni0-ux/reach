@@ -21,15 +21,14 @@ const defaultURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 // DefaultModels is the fallback order. REACH_MODELS (comma-separated) overrides it.
 // NVIDIA's Mistral and Google models were retired or unresponsive when this was set
 // (Oct 2026), and Qwen isn't hosted there, so the chain is three makers rather than five.
-// The Super models lead because on 16 Oct 2026 the other three hung until timeout on
-// every call, which cost each draft 4.5 minutes and ran a whole run out of time.
-// Nemotron 3.5 Super wrote the sharpest drafts in testing; 3 Super is the steady backup.
+// The Super models lead because on 16 Oct 2026 the others hung until timeout on every
+// call, which cost each draft minutes and ran whole runs out of time; Nemotron 3 Ultra was
+// retired the same day (HTTP 404). Nemotron 3.5 Super wrote the sharpest drafts in testing.
 var DefaultModels = []string{
 	"nvidia/nemotron-3.5-super-vl-120b-a12b", // NVIDIA, newest
-	"nvidia/nemotron-3-super-120b-a12b",      // NVIDIA, answers fastest
-	"nvidia/nemotron-3-ultra-550b-a55b",      // NVIDIA (the website's first choice)
-	"meta/llama-3.2-90b-vision-instruct",     // Meta
+	"nvidia/nemotron-3-super-120b-a12b",      // NVIDIA, steady backup
 	"deepseek-ai/deepseek-v4.1-flash",        // DeepSeek
+	"meta/llama-3.2-90b-vision-instruct",     // Meta
 }
 
 // Message is one chat turn.
@@ -102,8 +101,9 @@ type chatResponse struct {
 func (c *Client) one(ctx context.Context, model string, msgs []Message) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.PerModel)
 	defer cancel()
-	// Nemotron reasons before answering; leave headroom so the answer isn't cut off.
-	body, _ := json.Marshal(chatRequest{Model: model, Messages: msgs, Temperature: 0.6, TopP: 0.9, MaxTokens: 2000})
+	// Nemotron reasons before answering, often 2,000+ tokens for a 200-character comment;
+	// at a 2,000 cap it ran out mid-thought and answered nothing, so leave plenty of room.
+	body, _ := json.Marshal(chatRequest{Model: model, Messages: msgs, Temperature: 0.6, TopP: 0.9, MaxTokens: 8000})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
