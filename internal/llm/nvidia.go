@@ -21,11 +21,13 @@ const defaultURL = "https://integrate.api.nvidia.com/v1/chat/completions"
 // DefaultModels is the fallback order. REACH_MODELS (comma-separated) overrides it.
 // NVIDIA's Mistral and Google models were retired or unresponsive when this was set
 // (Oct 2026), and Qwen isn't hosted there, so the chain is three makers rather than five.
+// Nemotron 3 Super leads because on 16 Oct 2026 the other three hung until timeout on
+// every call, which cost each draft 4.5 minutes and ran a whole run out of time.
 var DefaultModels = []string{
+	"nvidia/nemotron-3-super-120b-a12b",  // NVIDIA, answers fastest
 	"nvidia/nemotron-3-ultra-550b-a55b",  // NVIDIA (the website's first choice)
 	"meta/llama-3.2-90b-vision-instruct", // Meta
 	"deepseek-ai/deepseek-v4.1-flash",    // DeepSeek
-	"nvidia/nemotron-3-super-120b-a12b",  // NVIDIA, smaller, last resort
 }
 
 // Message is one chat turn.

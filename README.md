@@ -48,8 +48,8 @@ broken rules listed (up to three tries); one that still fails goes to the Sheet 
    (`discover.English`), since uploaders often mislabel videos.
 3. **Rank** as above, and keep the best few (`-drafts 5`).
 4. **Draft.** Comments are written from the projects the website publishes at `/portfolio.json`, so they only cite
-   real work, and end with one link. Models are tried in order on NVIDIA's API until one answers: Nemotron 3 Ultra,
-   Llama 3.2 90B, DeepSeek V4.1 Flash, Nemotron 3 Super (`REACH_MODELS` overrides).
+   real work, and end with one link. Models are tried in order on NVIDIA's API until one answers: Nemotron 3 Super,
+   Nemotron 3 Ultra, Llama 3.2 90B, DeepSeek V4.1 Flash (`REACH_MODELS` overrides).
 5. **Queue.** Drafts go to the Google Sheet as "pending" (or "needs edit" if they failed a rule).
 6. **Approve.** I read each draft, edit it if I want, and set Status to "approve" or "skip" from the dropdown.
 7. **Post.** `reach assist` copies each approved comment, opens its post, and marks the row "posted" once I've pasted
